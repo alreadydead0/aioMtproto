@@ -11,6 +11,10 @@ import sys
 # Ensure local aiogram package is loaded
 sys.path.insert(0, os.path.abspath("."))
 
+from tests.test_mtproto.test_bot_integration import (
+    test_bot_mtproto_initialization,
+    test_dispatcher_mtproto_event_routing,
+)
 from tests.test_mtproto.test_crypto import (
     test_aes_ige_roundtrip,
     test_auth_key_and_kdf,
@@ -23,6 +27,11 @@ from tests.test_mtproto.test_errors import (
     test_parse_dc_migrates,
     test_parse_flood_wait,
     test_parse_slowmode_wait,
+)
+from tests.test_mtproto.test_media import (
+    test_chunker_sizes_and_partitioning,
+    test_file_downloader_parallel_and_disk_stream,
+    test_file_uploader_small_and_big,
 )
 from tests.test_mtproto.test_rpc_engine import (
     test_encrypted_message_codec_and_containers,
@@ -43,17 +52,6 @@ from tests.test_mtproto.test_transports import (
     test_abridged_transport_small_packet,
     test_full_transport,
     test_intermediate_transport,
-)
-from tests.test_mtproto.test_bot_integration import (
-    test_bot_mtproto_initialization,
-    test_dispatcher_mtproto_event_routing,
-)
-
-
-from tests.test_mtproto.test_media import (
-    test_chunker_sizes_and_partitioning,
-    test_file_downloader_parallel_and_disk_stream,
-    test_file_uploader_small_and_big,
 )
 
 

@@ -8,7 +8,8 @@ import asyncio
 import io
 import logging
 import struct
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from collections.abc import Callable
+from typing import Any, Dict, List, Optional, TypeVar
 
 from aiogram.errors.mtproto import RPCError, parse_rpc_error
 from aiogram.mtproto.connection.tcp import TCPConnection
@@ -244,12 +245,18 @@ class RPCEngine:
         # 3. BadMsgNotification (0xa7eff811)
         if c_id == BadMsgNotification.ID:
             bad_msg = BadMsgNotification.read(b_io)
-            logger.warning("Received BadMsgNotification: error_code=%d for msg_id=%d", bad_msg.error_code, bad_msg.bad_msg_id)
+            logger.warning(
+                "Received BadMsgNotification: error_code=%d for msg_id=%d",
+                bad_msg.error_code,
+                bad_msg.bad_msg_id,
+            )
             req_entry = self._pending_requests.pop(bad_msg.bad_msg_id, None)
             if req_entry:
                 fut, _ = req_entry
                 if not fut.done():
-                    fut.set_exception(RPCError(bad_msg.error_code, f"BadMsgNotification {bad_msg.error_code}"))
+                    fut.set_exception(
+                        RPCError(bad_msg.error_code, f"BadMsgNotification {bad_msg.error_code}")
+                    )
             return
 
         # 4. Updates or other TL objects

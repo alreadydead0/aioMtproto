@@ -25,7 +25,9 @@ class StringSession(BaseMTProtoSession):
 
     def __init__(self, session_string: str = "") -> None:
         self.session_string = session_string.strip()
-        self._data: SessionData = self._decode(self.session_string) if self.session_string else SessionData()
+        self._data: SessionData = (
+            self._decode(self.session_string) if self.session_string else SessionData()
+        )
 
     @staticmethod
     def _encode(data: SessionData) -> str:

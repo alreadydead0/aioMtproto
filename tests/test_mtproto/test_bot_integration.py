@@ -4,6 +4,7 @@ Tests for aiogram Bot MTProto mode initialization and Dispatcher / Router integr
 
 import asyncio
 import datetime
+
 import pytest
 
 from aiogram import Bot, Dispatcher, F, Router

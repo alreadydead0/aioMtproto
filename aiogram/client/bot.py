@@ -413,7 +413,9 @@ class Bot:
         Invoke raw Telegram MTProto RPC query.
         """
         if self.mtproto is None:
-            msg = "MTProto client is not configured on this Bot instance (pass api_id and api_hash)"
+            msg = (
+                "MTProto client is not configured on this Bot instance (pass api_id and api_hash)"
+            )
             raise RuntimeError(msg)
         return await self.mtproto.invoke(query, timeout=timeout)
 

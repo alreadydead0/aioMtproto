@@ -9,7 +9,11 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from aiogram.mtproto.connection.dc import DataCenter, get_dc
-from aiogram.mtproto.connection.transport import AbridgedTransport, BaseTransport, IntermediateTransport
+from aiogram.mtproto.connection.transport import (
+    AbridgedTransport,
+    BaseTransport,
+    IntermediateTransport,
+)
 
 if TYPE_CHECKING:
     from aiogram.mtproto.crypto.auth_key import AuthKey
@@ -47,7 +51,9 @@ class TCPConnection:
         if self.is_connected:
             return
 
-        logger.debug("Connecting to DC %d (%s:%d)...", self.dc.dc_id, self.dc.ip_address, self.dc.port)
+        logger.debug(
+            "Connecting to DC %d (%s:%d)...", self.dc.dc_id, self.dc.ip_address, self.dc.port
+        )
         try:
             self.reader, self.writer = await asyncio.wait_for(
                 asyncio.open_connection(self.dc.ip_address, self.dc.port),

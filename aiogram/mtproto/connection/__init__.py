@@ -4,7 +4,7 @@ MTProto connection components (TCP, Transports, DCs, Pool).
 
 from __future__ import annotations
 
-from .dc import DataCenter, get_dc, PROD_DCS, TEST_DCS
+from .dc import PROD_DCS, TEST_DCS, DataCenter, get_dc
 from .tcp import TCPConnection
 from .transport import (
     AbridgedTransport,

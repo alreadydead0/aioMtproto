@@ -142,6 +142,7 @@ class users:
 
         def read_result(self, b: BinaryIO) -> list[User]:
             from aiogram.raw.all import read_tl_object
+
             return read_vector(b, read_tl_object)
 
     class GetFullUser(TLRequest[Any]):
@@ -156,6 +157,7 @@ class users:
 
         def read_result(self, b: BinaryIO) -> Any:
             from aiogram.raw.all import read_tl_object
+
             return read_tl_object(b)
 
 
@@ -207,6 +209,7 @@ class messages:
 
         def read_result(self, b: BinaryIO) -> Updates:
             from aiogram.raw.all import read_tl_object
+
             return read_tl_object(b)
 
     class EditMessage(TLRequest[Updates]):
@@ -229,6 +232,7 @@ class messages:
 
         def read_result(self, b: BinaryIO) -> Updates:
             from aiogram.raw.all import read_tl_object
+
             return read_tl_object(b)
 
     class DeleteMessages(TLRequest[Any]):
@@ -245,6 +249,7 @@ class messages:
 
         def read_result(self, b: BinaryIO) -> Any:
             from aiogram.raw.all import read_tl_object
+
             return read_tl_object(b)
 
     class GetHistory(TLRequest[Any]):
@@ -286,6 +291,7 @@ class messages:
 
         def read_result(self, b: BinaryIO) -> Any:
             from aiogram.raw.all import read_tl_object
+
             return read_tl_object(b)
 
 
@@ -314,7 +320,9 @@ class upload:
         ID = 0xDE7B673D
         QUALNAME = "functions.upload.SaveBigFilePart"
 
-        def __init__(self, file_id: int, file_part: int, file_total_parts: int, bytes: bytes) -> None:
+        def __init__(
+            self, file_id: int, file_part: int, file_total_parts: int, bytes: bytes
+        ) -> None:
             self.file_id = file_id
             self.file_part = file_part
             self.file_total_parts = file_total_parts
@@ -352,4 +360,5 @@ class upload:
 
         def read_result(self, b: BinaryIO) -> Any:
             from aiogram.raw.all import read_tl_object
+
             return read_tl_object(b)

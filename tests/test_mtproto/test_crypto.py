@@ -4,6 +4,7 @@ Tests for MTProto cryptographic primitives (AES-IGE, DH, Pollard's rho, RSA, KDF
 
 import hashlib
 import os
+
 import pytest
 
 from aiogram.mtproto.crypto.aes_ige import PureAES, aes_ige_decrypt, aes_ige_encrypt

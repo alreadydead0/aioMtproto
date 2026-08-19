@@ -9,7 +9,7 @@ import asyncio
 import os
 import struct
 import zlib
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 
 class BaseTransport(abc.ABC):

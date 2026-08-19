@@ -5,10 +5,11 @@ MTProto File chunking and partitioning.
 from __future__ import annotations
 
 import os
-from typing import BinaryIO, Generator
+from collections.abc import Generator
+from typing import BinaryIO
 
 CHUNK_SIZE_SMALL = 128 * 1024  # 128 KB
-CHUNK_SIZE_BIG = 512 * 1024    # 512 KB
+CHUNK_SIZE_BIG = 512 * 1024  # 512 KB
 BIG_FILE_THRESHOLD = 10 * 1024 * 1024  # 10 MB
 
 

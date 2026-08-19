@@ -25,7 +25,14 @@ from aiogram.mtproto.crypto.rsa import find_rsa_key, rsa_encrypt
 from aiogram.mtproto.protocol.ids import IdGenerator
 from aiogram.mtproto.protocol.message import MessageCodec
 from aiogram.raw.all import read_tl_object
-from aiogram.raw.core.primitives import read_bytes, read_int, read_int128, read_uint, write_bytes, write_int128
+from aiogram.raw.core.primitives import (
+    read_bytes,
+    read_int,
+    read_int128,
+    read_uint,
+    write_bytes,
+    write_int128,
+)
 from aiogram.raw.core.tl_core_types import (
     DhGenOk,
     ReqDHParams,

@@ -4,8 +4,9 @@ Tests for high-speed parallel MTProto media uploader, downloader, and chunker.
 
 import asyncio
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from aiogram.media.chunker import (
     BIG_FILE_THRESHOLD,

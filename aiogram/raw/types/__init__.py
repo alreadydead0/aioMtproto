@@ -146,7 +146,9 @@ class InputPeerChannel(InputPeer):
         self.access_hash = access_hash
 
     def write(self) -> bytes:
-        return struct.pack("<I", self.ID) + write_long(self.channel_id) + write_long(self.access_hash)
+        return (
+            struct.pack("<I", self.ID) + write_long(self.channel_id) + write_long(self.access_hash)
+        )
 
     @classmethod
     def read(cls, b: BinaryIO) -> InputPeerChannel:
@@ -292,7 +294,8 @@ class User(TLObject):
     @classmethod
     def read(cls, b: BinaryIO) -> User:
         flags = read_uint(b)
-        flags2 = read_uint(b) if (flags & (1 << 30)) else 0
+        if flags & (1 << 30):
+            read_uint(b)
         user_id = read_long(b)
         access_hash = read_long(b) if (flags & (1 << 0)) else None
         first_name = read_string(b) if (flags & (1 << 1)) else None
@@ -442,6 +445,7 @@ class UpdateShort(TLObject):
     @classmethod
     def read(cls, b: BinaryIO) -> UpdateShort:
         from aiogram.raw.all import read_tl_object
+
         update = read_tl_object(b)
         date = read_int(b)
         return UpdateShort(update=update, date=date)
@@ -565,6 +569,7 @@ class UpdateNewMessage(TLObject):
     @classmethod
     def read(cls, b: BinaryIO) -> UpdateNewMessage:
         from aiogram.raw.all import read_tl_object
+
         msg = read_tl_object(b)
         pts = read_int(b)
         pts_count = read_int(b)
@@ -592,6 +597,7 @@ class Updates(TLObject):
     @classmethod
     def read(cls, b: BinaryIO) -> Updates:
         from aiogram.raw.all import read_tl_object
+
         updates = read_vector(b, read_tl_object)
         users = read_vector(b, read_tl_object)
         chats = read_vector(b, read_tl_object)
@@ -623,6 +629,7 @@ class UpdatesCombined(TLObject):
     @classmethod
     def read(cls, b: BinaryIO) -> UpdatesCombined:
         from aiogram.raw.all import read_tl_object
+
         updates = read_vector(b, read_tl_object)
         users = read_vector(b, read_tl_object)
         chats = read_vector(b, read_tl_object)

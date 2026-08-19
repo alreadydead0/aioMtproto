@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import TYPE_CHECKING, BinaryIO, Callable, Optional, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, BinaryIO, Optional, Union
 
 from aiogram.errors.mtproto import FileMigrate
 from aiogram.media.chunker import CHUNK_SIZE_BIG

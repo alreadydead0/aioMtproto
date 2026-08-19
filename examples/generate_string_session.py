@@ -6,6 +6,7 @@ Usage:
 """
 
 import asyncio
+
 from aiogram import Bot
 
 
@@ -49,7 +50,9 @@ async def main() -> None:
     print(session_string)
     print("=" * 60)
     print("\nKeep this string secret! You can now use it in your code as:")
-    print(f'bot = Bot(api_id={api_id}, api_hash="{api_hash}", mtproto_session="{session_string[:15]}...")')
+    print(
+        f'bot = Bot(api_id={api_id}, api_hash="{api_hash}", mtproto_session="{session_string[:15]}...")'
+    )
 
     await bot.disconnect()
 

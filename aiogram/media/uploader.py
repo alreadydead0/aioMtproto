@@ -8,7 +8,8 @@ import asyncio
 import math
 import os
 import random
-from typing import TYPE_CHECKING, BinaryIO, Callable, Optional, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, BinaryIO, Optional, Union
 
 from aiogram.media.chunker import (
     BIG_FILE_THRESHOLD,
@@ -17,7 +18,8 @@ from aiogram.media.chunker import (
     chunk_bytes,
     get_chunk_size,
 )
-from aiogram.raw import functions as raw_funcs, types as raw_types
+from aiogram.raw import functions as raw_funcs
+from aiogram.raw import types as raw_types
 
 if TYPE_CHECKING:
     from aiogram.client.mtproto import MTProtoClient
@@ -101,7 +103,7 @@ class FileUploader:
                                 )
                             )
                         break
-                    except Exception as e:
+                    except Exception:
                         if attempt == self.max_retries - 1:
                             raise
                         await asyncio.sleep(0.5 * (attempt + 1))
@@ -122,5 +124,7 @@ class FileUploader:
         await asyncio.gather(*tasks)
 
         if is_big:
-            return raw_types.InputFileBig(id=file_id, parts=total_parts, name=file_name or "file.bin")
+            return raw_types.InputFileBig(
+                id=file_id, parts=total_parts, name=file_name or "file.bin"
+            )
         return raw_types.InputFile(id=file_id, parts=total_parts, name=file_name or "file.bin")

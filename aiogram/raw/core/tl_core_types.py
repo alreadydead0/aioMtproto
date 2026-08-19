@@ -72,7 +72,11 @@ class RpcError(TLObject):
         self.error_message = error_message
 
     def write(self) -> bytes:
-        return struct.pack("<I", self.ID) + write_int(self.error_code) + write_string(self.error_message)
+        return (
+            struct.pack("<I", self.ID)
+            + write_int(self.error_code)
+            + write_string(self.error_message)
+        )
 
     @classmethod
     def read(cls, b: BinaryIO) -> RpcError:
@@ -98,7 +102,9 @@ class BadServerSalt(TLObject):
     ID = 0xEDAB447B
     QUALNAME = "types.BadServerSalt"
 
-    def __init__(self, bad_msg_id: int, bad_msg_seqno: int, error_code: int, new_server_salt: int) -> None:
+    def __init__(
+        self, bad_msg_id: int, bad_msg_seqno: int, error_code: int, new_server_salt: int
+    ) -> None:
         self.bad_msg_id = bad_msg_id
         self.bad_msg_seqno = bad_msg_seqno
         self.error_code = error_code
@@ -173,7 +179,11 @@ class PingDelayDisconnect(TLRequest[int]):
         self.disconnect_delay = disconnect_delay
 
     def write(self) -> bytes:
-        return struct.pack("<I", self.ID) + write_long(self.ping_id) + write_int(self.disconnect_delay)
+        return (
+            struct.pack("<I", self.ID)
+            + write_long(self.ping_id)
+            + write_int(self.disconnect_delay)
+        )
 
     def read_result(self, b: BinaryIO) -> int:
         read_uint(b)

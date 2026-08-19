@@ -11,15 +11,31 @@ from aiogram import types as tg_types
 from aiogram.enums import ChatType
 from aiogram.raw.types import (
     Message as RawMessage,
+)
+from aiogram.raw.types import (
     PeerChannel,
     PeerChat,
     PeerUser,
+)
+from aiogram.raw.types import (
     UpdateNewMessage as RawUpdateNewMessage,
+)
+from aiogram.raw.types import (
     Updates as RawUpdates,
+)
+from aiogram.raw.types import (
     UpdatesCombined as RawUpdatesCombined,
+)
+from aiogram.raw.types import (
     UpdateShort as RawUpdateShort,
+)
+from aiogram.raw.types import (
     UpdateShortChatMessage as RawUpdateShortChatMessage,
+)
+from aiogram.raw.types import (
     UpdateShortMessage as RawUpdateShortMessage,
+)
+from aiogram.raw.types import (
     User as RawUser,
 )
 
@@ -105,7 +121,9 @@ def normalize_tl_update(update_obj: Any, update_id: int = 1) -> list[tg_types.Up
 
             from_user = None
             if raw_msg.from_id and isinstance(raw_msg.from_id, PeerUser):
-                from_user = tg_types.User(id=raw_msg.from_id.user_id, is_bot=False, first_name="User")
+                from_user = tg_types.User(
+                    id=raw_msg.from_id.user_id, is_bot=False, first_name="User"
+                )
 
             chat = tg_types.Chat(
                 id=chat_id,

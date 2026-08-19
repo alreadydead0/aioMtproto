@@ -50,4 +50,6 @@ def get_dc(dc_id: int, test_mode: bool = False) -> DataCenter:
     if dc_id in dc_map:
         return dc_map[dc_id]
     # Default fallback to DC 2
-    return dc_map.get(2, DataCenter(dc_id=dc_id, ip_address="149.154.167.51", port=443, is_test=test_mode))
+    return dc_map.get(
+        2, DataCenter(dc_id=dc_id, ip_address="149.154.167.51", port=443, is_test=test_mode)
+    )

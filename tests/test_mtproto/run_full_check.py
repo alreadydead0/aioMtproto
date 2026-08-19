@@ -1,3 +1,4 @@
+# ruff: noqa: T201
 import asyncio
 import os
 import sys
@@ -5,47 +6,47 @@ import time
 
 sys.path.insert(0, os.path.abspath("."))
 
+from tests.test_mtproto.test_bot_integration import (
+    test_bot_mtproto_initialization,
+    test_dispatcher_mtproto_event_routing,
+)
 from tests.test_mtproto.test_crypto import (
-    test_pure_aes_roundtrip,
     test_aes_ige_roundtrip,
-    test_factorize_pq,
     test_auth_key_and_kdf,
+    test_factorize_pq,
+    test_pure_aes_roundtrip,
     test_rsa_encryption,
 )
-from tests.test_mtproto.test_transports import (
-    test_abridged_transport_small_packet,
-    test_abridged_transport_large_packet,
-    test_intermediate_transport,
-    test_full_transport,
+from tests.test_mtproto.test_errors import (
+    test_parse_auth_errors,
+    test_parse_dc_migrates,
+    test_parse_flood_wait,
+    test_parse_slowmode_wait,
 )
-from tests.test_mtproto.test_tl import (
-    test_tl_primitives,
-    test_tl_user_serialization,
-    test_tl_polymorphic_reader_and_gzip,
+from tests.test_mtproto.test_media import (
+    test_chunker_sizes_and_partitioning,
+    test_file_downloader_parallel_and_disk_stream,
+    test_file_uploader_small_and_big,
+)
+from tests.test_mtproto.test_rpc_engine import (
+    test_encrypted_message_codec_and_containers,
+    test_plain_message_codec,
 )
 from tests.test_mtproto.test_session import (
     test_memory_session,
     test_sqlite_session,
     test_string_session,
 )
-from tests.test_mtproto.test_errors import (
-    test_parse_flood_wait,
-    test_parse_slowmode_wait,
-    test_parse_dc_migrates,
-    test_parse_auth_errors,
+from tests.test_mtproto.test_tl import (
+    test_tl_polymorphic_reader_and_gzip,
+    test_tl_primitives,
+    test_tl_user_serialization,
 )
-from tests.test_mtproto.test_rpc_engine import (
-    test_plain_message_codec,
-    test_encrypted_message_codec_and_containers,
-)
-from tests.test_mtproto.test_bot_integration import (
-    test_bot_mtproto_initialization,
-    test_dispatcher_mtproto_event_routing,
-)
-from tests.test_mtproto.test_media import (
-    test_chunker_sizes_and_partitioning,
-    test_file_uploader_small_and_big,
-    test_file_downloader_parallel_and_disk_stream,
+from tests.test_mtproto.test_transports import (
+    test_abridged_transport_large_packet,
+    test_abridged_transport_small_packet,
+    test_full_transport,
+    test_intermediate_transport,
 )
 
 

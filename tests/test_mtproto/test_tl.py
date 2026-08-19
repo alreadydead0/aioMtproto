@@ -3,6 +3,7 @@ Tests for Telegram TL binary serialization and parsing.
 """
 
 import io
+
 import pytest
 
 from aiogram.raw.all import read_tl_object

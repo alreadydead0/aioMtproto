@@ -3,6 +3,7 @@ Tests for MTProto TCP transport framing (Abridged, Intermediate, Padded Intermed
 """
 
 import asyncio
+
 import pytest
 
 from aiogram.mtproto.connection.transport import (

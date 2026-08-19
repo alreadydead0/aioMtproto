@@ -34,7 +34,11 @@ class SQLiteSession(BaseMTProtoSession):
     """
 
     def __init__(self, filename: str = "aiogram_session.session") -> None:
-        if not filename.endswith(".session") and not filename.endswith(".db") and not filename.endswith(".sqlite"):
+        if (
+            not filename.endswith(".session")
+            and not filename.endswith(".db")
+            and not filename.endswith(".sqlite")
+        ):
             filename = f"{filename}.session"
         self.filename = filename
         self._lock = asyncio.Lock()
@@ -59,7 +63,18 @@ class SQLiteSession(BaseMTProtoSession):
                 if not row:
                     return SessionData()
 
-                dc_id, server_address, port, auth_key_blob, server_salt, seq_no, user_id, is_bot, phone, is_test = row
+                (
+                    dc_id,
+                    server_address,
+                    port,
+                    auth_key_blob,
+                    server_salt,
+                    seq_no,
+                    user_id,
+                    is_bot,
+                    phone,
+                    is_test,
+                ) = row
                 auth_key = AuthKey(auth_key_blob) if auth_key_blob else None
 
                 return SessionData(

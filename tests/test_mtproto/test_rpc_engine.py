@@ -3,6 +3,7 @@ Tests for MTProto MessageCodec, container multiplexing, and RPCEngine.
 """
 
 import os
+
 import pytest
 
 from aiogram.mtproto.crypto.auth_key import AuthKey

@@ -7,8 +7,8 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from collections.abc import AsyncGenerator
-from typing import Any, Callable, List, Optional, TypeVar, Union
+from collections.abc import AsyncGenerator, Callable
+from typing import Any, List, Optional, TypeVar, Union
 
 from aiogram import types as tg_types
 from aiogram.enums import ChatType
@@ -18,7 +18,8 @@ from aiogram.mtproto.connection.tcp import TCPConnection
 from aiogram.mtproto.connection.transport import BaseTransport, IntermediateTransport
 from aiogram.mtproto.protocol.rpc import RPCEngine
 from aiogram.mtproto.updates.normalizer import normalize_tl_update
-from aiogram.raw import functions as raw_funcs, types as raw_types
+from aiogram.raw import functions as raw_funcs
+from aiogram.raw import types as raw_types
 from aiogram.raw.core.primitives import TLRequest
 from aiogram.session.base import BaseMTProtoSession, SessionData
 from aiogram.session.memory import MemorySession
@@ -197,7 +198,9 @@ class MTProtoClient:
             )
         )
 
-    async def sign_in(self, phone_number: str, phone_code_hash: str, phone_code: str) -> tg_types.User:
+    async def sign_in(
+        self, phone_number: str, phone_code_hash: str, phone_code: str
+    ) -> tg_types.User:
         """
         Complete user authorization using received code.
         """
@@ -334,6 +337,7 @@ class MTProtoClient:
         Upload file using multi-worker parallel transfer engine.
         """
         from aiogram.media.uploader import FileUploader
+
         uploader = FileUploader(self, workers=workers)
         return await uploader.upload(source=source, file_name=file_name, progress=progress)
 
@@ -349,6 +353,7 @@ class MTProtoClient:
         Download file using multi-worker parallel transfer engine with direct disk streaming.
         """
         from aiogram.media.downloader import FileDownloader
+
         downloader = FileDownloader(self, workers=workers)
         return await downloader.download(
             location=location,

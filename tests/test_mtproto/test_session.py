@@ -3,6 +3,7 @@ Tests for MTProto session persistence (MemorySession, SQLiteSession).
 """
 
 import os
+
 import pytest
 
 from aiogram.mtproto.crypto.auth_key import AuthKey
