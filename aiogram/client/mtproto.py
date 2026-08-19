@@ -8,8 +8,9 @@ import asyncio
 import logging
 import os
 import random
+import re
 from collections.abc import AsyncGenerator, Callable
-from typing import Any, BinaryIO, List, Optional, TypeVar, Union
+from typing import Any, BinaryIO, TypeVar
 
 logger = logging.getLogger("aiogram.client.mtproto")
 
@@ -33,18 +34,20 @@ from aiogram.session.string import StringSession
 T = TypeVar("T")
 
 
-def _to_input_peer(peer_id: int | str) -> raw_types.InputPeer:
+def _to_input_peer(peer_id: Any, access_hash: int = 0) -> raw_types.InputPeer:
     """
     Resolve peer identifier to InputPeer.
     """
+    if isinstance(peer_id, raw_types.InputPeer):
+        return peer_id
     if isinstance(peer_id, int):
         if peer_id > 0:
-            return raw_types.InputPeerUser(user_id=peer_id, access_hash=0)
+            return raw_types.InputPeerUser(user_id=peer_id, access_hash=access_hash)
         if str(peer_id).startswith("-100"):
             channel_id = int(str(peer_id)[4:])
-            return raw_types.InputPeerChannel(channel_id=channel_id, access_hash=0)
+            return raw_types.InputPeerChannel(channel_id=channel_id, access_hash=access_hash)
         return raw_types.InputPeerChat(chat_id=-peer_id)
-    # Default to user
+    # Default to self
     return raw_types.InputPeerSelf()
 
 
@@ -387,13 +390,14 @@ class MTProtoClient:
             attributes=attributes,
             force_file=force_file,
         )
+        clean_text = re.sub(r"<[^>]+>", "", caption) if caption else ""
         peer = _to_input_peer(chat_id)
         random_id = random.getrandbits(63)
         await self.invoke(
             raw_funcs.messages.SendMedia(
                 peer=peer,
                 media=media,
-                message=caption,
+                message=clean_text,
                 random_id=random_id,
                 reply_to_msg_id=reply_to_message_id,
             )
@@ -451,13 +455,14 @@ class MTProtoClient:
             attributes=attributes,
             force_file=False,
         )
+        clean_text = re.sub(r"<[^>]+>", "", caption) if caption else ""
         peer = _to_input_peer(chat_id)
         random_id = random.getrandbits(63)
         await self.invoke(
             raw_funcs.messages.SendMedia(
                 peer=peer,
                 media=media,
-                message=caption,
+                message=clean_text,
                 random_id=random_id,
                 reply_to_msg_id=reply_to_message_id,
             )

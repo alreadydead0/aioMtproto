@@ -108,10 +108,17 @@ class FileUploader:
 
         uploaded_bytes = 0
         lock = asyncio.Lock()
+        queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(maxsize=self.workers * 2)
 
-        async def _upload_worker(part_index: int, part_bytes: bytes) -> None:
+        async def _worker() -> None:
             nonlocal uploaded_bytes
-            async with self.semaphore:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    queue.task_done()
+                    break
+
+                part_index, part_bytes = item
                 for attempt in range(self.max_retries):
                     try:
                         if is_big:
@@ -134,8 +141,9 @@ class FileUploader:
                         break
                     except Exception:
                         if attempt == self.max_retries - 1:
+                            queue.task_done()
                             raise
-                        await asyncio.sleep(0.5 * (attempt + 1))
+                        await asyncio.sleep(0.3 * (attempt + 1))
 
                 async with lock:
                     uploaded_bytes += len(part_bytes)
@@ -144,13 +152,23 @@ class FileUploader:
                             progress(uploaded_bytes, file_size)
                         except Exception:
                             pass
+                queue.task_done()
 
-        # Parallel upload tasks – iterate chunks lazily so only one chunk per worker is in RAM
-        tasks = [
-            _upload_worker(part_idx, part_data)
-            for part_idx, part_data in _iter_file_chunks(source, chunk_size)
-        ]
-        await asyncio.gather(*tasks)
+        # Spawn persistent upload workers
+        worker_tasks = [asyncio.create_task(_worker()) for _ in range(self.workers)]
+
+        try:
+            # Stream chunks from disk/source into queue with bounded memory
+            for part_idx, part_data in _iter_file_chunks(source, chunk_size):
+                await queue.put((part_idx, part_data))
+
+            # Wait for all chunks to be processed
+            await queue.join()
+        finally:
+            # Signal workers to exit
+            for _ in range(self.workers):
+                await queue.put(None)
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
 
         if is_big:
             return raw_types.InputFileBig(

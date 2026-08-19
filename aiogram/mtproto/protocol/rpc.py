@@ -178,20 +178,25 @@ class RPCEngine:
             return
         msg_ids = list(self._ack_queue)
         self._ack_queue.clear()
-        ack = MsgsAck(msg_ids=msg_ids)
-        msg_id = self.id_gen.generate_msg_id()
-        # Non-content message: seq_no = self._seq_no * 2
-        seq_no = self._seq_no * 2
-        encrypted = MessageCodec.pack_encrypted(
-            auth_key=self.auth_key,
-            server_salt=self.server_salt,
-            session_id=self.session_id,
-            msg_id=msg_id,
-            seq_no=seq_no,
-            body=ack.write(),
-        )
-        async with self._send_lock:
-            await self.connection.send(encrypted)
+        try:
+            if not self.connection or not self.connection.is_connected:
+                return
+            ack = MsgsAck(msg_ids=msg_ids)
+            msg_id = self.id_gen.generate_msg_id()
+            # Non-content message: seq_no = self._seq_no * 2
+            seq_no = self._seq_no * 2
+            encrypted = MessageCodec.pack_encrypted(
+                auth_key=self.auth_key,
+                server_salt=self.server_salt,
+                session_id=self.session_id,
+                msg_id=msg_id,
+                seq_no=seq_no,
+                body=ack.write(),
+            )
+            async with self._send_lock:
+                await self.connection.send(encrypted)
+        except Exception:
+            pass
 
     async def _reader_loop(self) -> None:
         """

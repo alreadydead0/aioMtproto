@@ -577,7 +577,7 @@ class UpdateNewMessage(TLObject):
 
 
 class Updates(TLObject):
-    ID = 0x74CC1178
+    ID = 0x74AE4240
     QUALNAME = "types.Updates"
 
     def __init__(
@@ -604,6 +604,15 @@ class Updates(TLObject):
         date = read_int(b)
         seq = read_int(b)
         return Updates(updates=updates, users=users, chats=chats, date=date, seq=seq)
+
+
+class UpdatesTooLong(TLObject):
+    ID = 0xE317ED8B
+    QUALNAME = "types.UpdatesTooLong"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UpdatesTooLong:
+        return UpdatesTooLong()
 
 
 class UpdatesCombined(TLObject):
@@ -721,7 +730,7 @@ class ExportedAuthorizationLegacy(TLObject):
 
 
 class InputFile(TLObject):
-    ID = 0xF52FF12F
+    ID = 0xF52FF12B
     QUALNAME = "types.InputFile"
 
     def __init__(self, id: int, parts: int, name: str, md5_checksum: str = "") -> None:
@@ -750,7 +759,7 @@ class InputFile(TLObject):
 
 
 class InputFileBig(TLObject):
-    ID = 0xFA4F0E0E
+    ID = 0xFA4F0BB5
     QUALNAME = "types.InputFileBig"
 
     def __init__(self, id: int, parts: int, name: str) -> None:

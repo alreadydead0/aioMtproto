@@ -235,8 +235,8 @@ class messages:
 
             res = struct.pack("<II", self.ID, flags) + self.peer.write()
             if self.reply_to_msg_id is not None:
-                # InputReplyToMessage constructor (0x0bad8270)
-                res += struct.pack("<IIi", 0x0BAD8270, 0, self.reply_to_msg_id)
+                # InputReplyToMessage constructor (0x869fbe10)
+                res += struct.pack("<IIi", 0x869FBE10, 0, self.reply_to_msg_id)
             res += write_string(self.message)
             res += write_long(self.random_id)
             return res
@@ -247,7 +247,7 @@ class messages:
             return read_tl_object(b)
 
     class SendMedia(TLRequest[Updates]):
-        ID = 0x78524A6E
+        ID = 0x0330E77F
         QUALNAME = "functions.messages.SendMedia"
 
         def __init__(
@@ -270,8 +270,8 @@ class messages:
                 flags |= 1 << 0
             res = struct.pack("<II", self.ID, flags) + self.peer.write()
             if self.reply_to_msg_id is not None:
-                # InputReplyToMessage (ID=0x73ffcc13, reply_to_msg_id=...)
-                res += struct.pack("<III", 0x73FFCC13, 0, self.reply_to_msg_id)
+                # InputReplyToMessage constructor (0x869fbe10)
+                res += struct.pack("<IIi", 0x869FBE10, 0, self.reply_to_msg_id)
             res += self.media.write()
             res += write_string(self.message)
             res += write_long(self.random_id)
