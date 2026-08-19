@@ -138,9 +138,6 @@ async def do_handshake(conn: TCPConnection) -> tuple[AuthKey, int]:
     # First 20 bytes is SHA1 of the rest
     expected_hash = decrypted_answer[:20]
     inner_payload = decrypted_answer[20:]
-    if hashlib.sha1(inner_payload).digest() != expected_hash:
-        msg = "Checksum mismatch in server_DH_inner_data"
-        raise ValueError(msg)
 
     b_io = io.BytesIO(inner_payload)
     read_uint(b_io)  # constructor server_DH_inner_data (0xb5804368)
@@ -152,6 +149,11 @@ async def do_handshake(conn: TCPConnection) -> tuple[AuthKey, int]:
     dh_prime_bytes = read_bytes(b_io)
     g_a_bytes = read_bytes(b_io)
     server_time = read_int(b_io)
+
+    valid_len = b_io.tell()
+    if hashlib.sha1(inner_payload[:valid_len]).digest() != expected_hash:
+        msg = "Checksum mismatch in server_DH_inner_data"
+        raise ValueError(msg)
 
     dh_prime = int.from_bytes(dh_prime_bytes, "big")
     g_a = int.from_bytes(g_a_bytes, "big")
