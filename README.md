@@ -1,7 +1,7 @@
 # aiogram MTProto 🚀
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aiogram/aiogram/dev-3.x/docs/_static/aiogram.png" width="200" alt="aiogram logo"/>
+  <img src="docs/_static/logo.png" width="200" alt="aiogram logo"/>
 </p>
 
 <p align="center">
