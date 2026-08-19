@@ -1,0 +1,1 @@
+Transform aiogram into an MTProto-first framework with full native MTProto 2.0 protocol, TL schema, raw & high-level dual API, SQLite session persistence, update normalizer, and parallel media transfer engine while preserving Dispatcher, Router, and Filter ergonomics.
