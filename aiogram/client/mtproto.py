@@ -5,6 +5,8 @@ MTProto Client for aiogram.
 from __future__ import annotations
 
 import asyncio
+import datetime
+import html
 import logging
 import os
 import random
@@ -301,7 +303,7 @@ class MTProtoClient:
         chat = tg_types.Chat(id=chat_id_int, type=ChatType.PRIVATE)
         return tg_types.Message(
             message_id=random_id & 0x7FFFFFFF,
-            date=tg_types.base.UNSET,
+            date=datetime.datetime.now(datetime.timezone.utc),
             chat=chat,
             from_user=self.me,
             text=text,
@@ -322,7 +324,7 @@ class MTProtoClient:
         chat = tg_types.Chat(id=chat_id_int, type=ChatType.PRIVATE)
         return tg_types.Message(
             message_id=message_id,
-            date=tg_types.base.UNSET,
+            date=datetime.datetime.now(datetime.timezone.utc),
             chat=chat,
             from_user=self.me,
             text=text,
@@ -390,7 +392,7 @@ class MTProtoClient:
             attributes=attributes,
             force_file=force_file,
         )
-        clean_text = re.sub(r"<[^>]+>", "", caption) if caption else ""
+        clean_text = html.unescape(re.sub(r"<[^>]+>", "", caption)) if caption else ""
         peer = _to_input_peer(chat_id)
         random_id = random.getrandbits(63)
         await self.invoke(
@@ -406,7 +408,7 @@ class MTProtoClient:
         chat = tg_types.Chat(id=chat_id_int, type=ChatType.PRIVATE)
         return tg_types.Message(
             message_id=random_id & 0x7FFFFFFF,
-            date=tg_types.base.UNSET,
+            date=datetime.datetime.now(datetime.timezone.utc),
             chat=chat,
             from_user=self.me,
             text=caption,
@@ -455,7 +457,7 @@ class MTProtoClient:
             attributes=attributes,
             force_file=False,
         )
-        clean_text = re.sub(r"<[^>]+>", "", caption) if caption else ""
+        clean_text = html.unescape(re.sub(r"<[^>]+>", "", caption)) if caption else ""
         peer = _to_input_peer(chat_id)
         random_id = random.getrandbits(63)
         await self.invoke(
@@ -471,7 +473,7 @@ class MTProtoClient:
         chat = tg_types.Chat(id=chat_id_int, type=ChatType.PRIVATE)
         return tg_types.Message(
             message_id=random_id & 0x7FFFFFFF,
-            date=tg_types.base.UNSET,
+            date=datetime.datetime.now(datetime.timezone.utc),
             chat=chat,
             from_user=self.me,
             text=caption,

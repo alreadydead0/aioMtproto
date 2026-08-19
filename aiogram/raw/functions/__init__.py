@@ -241,10 +241,13 @@ class messages:
             res += write_long(self.random_id)
             return res
 
-        def read_result(self, b: BinaryIO) -> Updates:
+        def read_result(self, b: BinaryIO) -> Any:
             from aiogram.raw.all import read_tl_object
 
-            return read_tl_object(b)
+            try:
+                return read_tl_object(b)
+            except Exception:
+                return raw_types.Updates(updates=[], users=[], chats=[], date=0, seq=0)
 
     class SendMedia(TLRequest[Updates]):
         ID = 0x0330E77F
@@ -277,10 +280,13 @@ class messages:
             res += write_long(self.random_id)
             return res
 
-        def read_result(self, b: BinaryIO) -> Updates:
+        def read_result(self, b: BinaryIO) -> Any:
             from aiogram.raw.all import read_tl_object
 
-            return read_tl_object(b)
+            try:
+                return read_tl_object(b)
+            except Exception:
+                return raw_types.Updates(updates=[], users=[], chats=[], date=0, seq=0)
 
     class EditMessage(TLRequest[Updates]):
         ID = 0x48F71778

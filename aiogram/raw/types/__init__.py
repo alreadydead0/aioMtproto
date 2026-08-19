@@ -332,7 +332,7 @@ class User(TLObject):
 
 
 class Message(TLObject):
-    ID = 0x761453C7
+    ID = 0xB92F76CF
     QUALNAME = "types.Message"
 
     def __init__(
@@ -570,10 +570,115 @@ class UpdateNewMessage(TLObject):
     def read(cls, b: BinaryIO) -> UpdateNewMessage:
         from aiogram.raw.all import read_tl_object
 
-        msg = read_tl_object(b)
-        pts = read_int(b)
-        pts_count = read_int(b)
+        try:
+            msg = read_tl_object(b)
+        except Exception:
+            msg = None
+        pts = read_int(b) if b.readable() else 0
+        pts_count = read_int(b) if b.readable() else 0
         return UpdateNewMessage(message=msg, pts=pts, pts_count=pts_count)
+
+
+class UpdateMessageID(TLObject):
+    ID = 0x4E90BFD6
+    QUALNAME = "types.UpdateMessageID"
+
+    def __init__(self, id: int, random_id: int) -> None:
+        self.id = id
+        self.random_id = random_id
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID) + write_int(self.id) + write_long(self.random_id)
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UpdateMessageID:
+        return UpdateMessageID(id=read_int(b), random_id=read_long(b))
+
+
+class UpdateEditMessage(TLObject):
+    ID = 0xE40370A3
+    QUALNAME = "types.UpdateEditMessage"
+
+    def __init__(self, message: TLObject, pts: int, pts_count: int) -> None:
+        self.message = message
+        self.pts = pts
+        self.pts_count = pts_count
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UpdateEditMessage:
+        from aiogram.raw.all import read_tl_object
+
+        try:
+            msg = read_tl_object(b)
+        except Exception:
+            msg = None
+        pts = read_int(b) if b.readable() else 0
+        pts_count = read_int(b) if b.readable() else 0
+        return UpdateEditMessage(message=msg, pts=pts, pts_count=pts_count)
+
+
+class UpdateDeleteMessages(TLObject):
+    ID = 0xA20DB0E5
+    QUALNAME = "types.UpdateDeleteMessages"
+
+    def __init__(self, messages: list[int], pts: int, pts_count: int) -> None:
+        self.messages = messages
+        self.pts = pts
+        self.pts_count = pts_count
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UpdateDeleteMessages:
+        try:
+            messages = read_vector(b, read_int)
+        except Exception:
+            messages = []
+        pts = read_int(b) if b.readable() else 0
+        pts_count = read_int(b) if b.readable() else 0
+        return UpdateDeleteMessages(messages=messages, pts=pts, pts_count=pts_count)
+
+
+class UpdateNewChannelMessage(TLObject):
+    ID = 0x62D45069
+    QUALNAME = "types.UpdateNewChannelMessage"
+
+    def __init__(self, message: TLObject, pts: int, pts_count: int) -> None:
+        self.message = message
+        self.pts = pts
+        self.pts_count = pts_count
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UpdateNewChannelMessage:
+        from aiogram.raw.all import read_tl_object
+
+        try:
+            msg = read_tl_object(b)
+        except Exception:
+            msg = None
+        pts = read_int(b) if b.readable() else 0
+        pts_count = read_int(b) if b.readable() else 0
+        return UpdateNewChannelMessage(message=msg, pts=pts, pts_count=pts_count)
+
+
+class UpdateEditChannelMessage(TLObject):
+    ID = 0x1B3F4DF7
+    QUALNAME = "types.UpdateEditChannelMessage"
+
+    def __init__(self, message: TLObject, pts: int, pts_count: int) -> None:
+        self.message = message
+        self.pts = pts
+        self.pts_count = pts_count
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UpdateEditChannelMessage:
+        from aiogram.raw.all import read_tl_object
+
+        try:
+            msg = read_tl_object(b)
+        except Exception:
+            msg = None
+        pts = read_int(b) if b.readable() else 0
+        pts_count = read_int(b) if b.readable() else 0
+        return UpdateEditChannelMessage(message=msg, pts=pts, pts_count=pts_count)
 
 
 class Updates(TLObject):
@@ -598,11 +703,20 @@ class Updates(TLObject):
     def read(cls, b: BinaryIO) -> Updates:
         from aiogram.raw.all import read_tl_object
 
-        updates = read_vector(b, read_tl_object)
-        users = read_vector(b, read_tl_object)
-        chats = read_vector(b, read_tl_object)
-        date = read_int(b)
-        seq = read_int(b)
+        try:
+            updates = read_vector(b, read_tl_object)
+        except Exception:
+            updates = []
+        try:
+            users = read_vector(b, read_tl_object)
+        except Exception:
+            users = []
+        try:
+            chats = read_vector(b, read_tl_object)
+        except Exception:
+            chats = []
+        date = read_int(b) if b.readable() else 0
+        seq = read_int(b) if b.readable() else 0
         return Updates(updates=updates, users=users, chats=chats, date=date, seq=seq)
 
 
