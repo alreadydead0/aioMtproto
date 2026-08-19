@@ -5,13 +5,14 @@ MTProto RPC Engine and packet multiplexer.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import logging
 import struct
 from collections.abc import Callable
-from typing import Any, Dict, List, Optional, TypeVar
+from typing import Any, TypeVar
 
-from aiogram.errors.mtproto import RPCError, parse_rpc_error
+from aiogram.errors.mtproto import AuthKeyNotFound, RPCError, parse_rpc_error
 from aiogram.mtproto.connection.tcp import TCPConnection
 from aiogram.mtproto.crypto.auth_key import AuthKey
 from aiogram.mtproto.protocol.ids import IdGenerator, generate_session_id
@@ -80,11 +81,20 @@ class RPCEngine:
     async def stop(self) -> None:
         if self._reader_task and not self._reader_task.done():
             self._reader_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._reader_task
-            except asyncio.CancelledError:
-                pass
             self._reader_task = None
+        for fut, _ in list(self._pending_requests.values()):
+            if not fut.done():
+                fut.set_exception(ConnectionError("RPCEngine stopped"))
+        self._pending_requests.clear()
+
+    def __repr__(self) -> str:
+        key_id = f"{self.auth_key.key_id:#018x}" if self.auth_key else "None"
+        return (
+            f"<RPCEngine session_id={self.session_id:#018x} "
+            f"auth_key_id={key_id} salt={self.server_salt}>"
+        )
 
     async def invoke(self, query: TLRequest[T], timeout: float = 30.0) -> T:
         """
@@ -137,6 +147,32 @@ class RPCEngine:
             self._pending_requests.pop(msg_id, None)
             raise
 
+    async def _resend_pending_request(
+        self, fut: asyncio.Future[Any], query: TLRequest[Any]
+    ) -> None:
+        """
+        Resend a pending request after updating server salt.
+        """
+        try:
+            body = query.write()
+            msg_id = self.id_gen.generate_msg_id()
+            seq_no = self._seq_no * 2 + 1
+            self._seq_no += 1
+            self._pending_requests[msg_id] = (fut, query)
+            encrypted = MessageCodec.pack_encrypted(
+                auth_key=self.auth_key,
+                server_salt=self.server_salt,
+                session_id=self.session_id,
+                msg_id=msg_id,
+                seq_no=seq_no,
+                body=body,
+            )
+            async with self._send_lock:
+                await self.connection.send(encrypted)
+        except Exception as ex:
+            if not fut.done():
+                fut.set_exception(ex)
+
     async def _send_ack(self) -> None:
         if not self._ack_queue:
             return
@@ -164,6 +200,20 @@ class RPCEngine:
         while True:
             try:
                 data = await self.connection.receive()
+                if len(data) == 4:
+                    err_code = struct.unpack("<i", data)[0]
+                    logger.error(
+                        "MTProto transport returned error code: %d (hex: %s)", err_code, data.hex()
+                    )
+                    if err_code == -404:
+                        exc: Exception = AuthKeyNotFound("AUTH_KEY_NOT_FOUND (-404)")
+                    else:
+                        exc = ConnectionError(f"MTProto transport error {err_code}")
+                    for fut, _ in list(self._pending_requests.values()):
+                        if not fut.done():
+                            fut.set_exception(exc)
+                    break
+
                 salt, s_session_id, messages = MessageCodec.unpack_encrypted(
                     auth_key=self.auth_key,
                     session_id=self.session_id,
@@ -182,7 +232,7 @@ class RPCEngine:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug("Reader loop exception: %s", e)
+                logger.warning("MTProto reader loop notice: %s", e)
                 # Fail any pending futures if connection broke
                 if not self.connection.is_connected:
                     for fut, _ in list(self._pending_requests.values()):
@@ -214,9 +264,9 @@ class RPCEngine:
                 res_c_id = struct.unpack("<I", res_c_id_bytes)[0]
                 if res_c_id == RpcError.ID:
                     err_code = struct.unpack("<i", b_io.read(4))[0]
-                    # read string
-                    err_msg_bytes = b_io.read()
-                    err_msg_str = err_msg_bytes.decode("utf-8", errors="replace")
+                    from aiogram.raw.core.primitives import read_string
+
+                    err_msg_str = read_string(b_io)
                     exc = parse_rpc_error(err_code, err_msg_str)
                     if req_entry:
                         fut, _ = req_entry
@@ -239,7 +289,16 @@ class RPCEngine:
         if c_id == BadServerSalt.ID:
             bad_salt = BadServerSalt.read(b_io)
             self.server_salt = bad_salt.new_server_salt
-            logger.info("Updated server salt to %d", self.server_salt)
+            logger.info(
+                "Updated server salt to %d for session %016x",
+                self.server_salt,
+                self.session_id & 0xFFFFFFFFFFFFFFFF,
+            )
+            req_entry = self._pending_requests.pop(bad_salt.bad_msg_id, None)
+            if req_entry:
+                fut, original_req = req_entry
+                if not fut.done():
+                    asyncio.create_task(self._resend_pending_request(fut, original_req))
             return
 
         # 3. BadMsgNotification (0xa7eff811)

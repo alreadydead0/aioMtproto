@@ -8,14 +8,11 @@ import asyncio
 import math
 import os
 import random
-from collections.abc import Callable
-from typing import TYPE_CHECKING, BinaryIO, Optional, Union
+from collections.abc import Callable, Generator
+from typing import TYPE_CHECKING, BinaryIO
 
 from aiogram.media.chunker import (
     BIG_FILE_THRESHOLD,
-    CHUNK_SIZE_BIG,
-    CHUNK_SIZE_SMALL,
-    chunk_bytes,
     get_chunk_size,
 )
 from aiogram.raw import functions as raw_funcs
@@ -25,6 +22,39 @@ if TYPE_CHECKING:
     from aiogram.client.mtproto import MTProtoClient
 
 ProgressCallback = Callable[[int, int], None]
+
+# Telegram's practical maximum per SaveFilePart / SaveBigFilePart call is 512 KiB.
+MAX_PART_SIZE = 512 * 1024
+
+
+def _iter_file_chunks(
+    source: str | bytes | BinaryIO,
+    chunk_size: int,
+) -> Generator[tuple[int, bytes], None, None]:
+    """
+    Yield ``(part_index, chunk_bytes)`` without loading the entire file into RAM.
+    Supports file paths, raw bytes, and file-like objects.
+    """
+    if isinstance(source, str):
+        with open(source, "rb") as f:
+            idx = 0
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                yield idx, chunk
+                idx += 1
+    elif isinstance(source, bytes):
+        for idx, offset in enumerate(range(0, len(source), chunk_size)):
+            yield idx, source[offset : offset + chunk_size]
+    else:
+        idx = 0
+        while True:
+            chunk = source.read(chunk_size)
+            if not chunk:
+                break
+            yield idx, chunk
+            idx += 1
 
 
 class FileUploader:
@@ -55,25 +85,24 @@ class FileUploader:
         file_id = random.getrandbits(63)
 
         if isinstance(source, str):
-            # File path on disk
+            # File path on disk – get size without reading into RAM
             if file_name is None:
                 file_name = os.path.basename(source)
             file_size = os.path.getsize(source)
-            with open(source, "rb") as f:
-                data = f.read()
         elif isinstance(source, bytes):
-            data = source
-            file_size = len(data)
+            file_size = len(source)
             if file_name is None:
                 file_name = "file.bin"
         else:
-            # File-like object
-            data = source.read()
-            file_size = len(data)
+            # File-like object: seek to end to measure, then rewind
+            pos = source.tell()
+            source.seek(0, 2)
+            file_size = source.tell() - pos
+            source.seek(pos)
             if file_name is None:
                 file_name = getattr(source, "name", "file.bin")
 
-        chunk_size = get_chunk_size(file_size)
+        chunk_size = min(get_chunk_size(file_size), MAX_PART_SIZE)
         total_parts = max(1, math.ceil(file_size / chunk_size))
         is_big = file_size > BIG_FILE_THRESHOLD
 
@@ -116,10 +145,10 @@ class FileUploader:
                         except Exception:
                             pass
 
-        # Parallel upload tasks
+        # Parallel upload tasks – iterate chunks lazily so only one chunk per worker is in RAM
         tasks = [
             _upload_worker(part_idx, part_data)
-            for part_idx, part_data in chunk_bytes(data, chunk_size)
+            for part_idx, part_data in _iter_file_chunks(source, chunk_size)
         ]
         await asyncio.gather(*tasks)
 

@@ -84,3 +84,18 @@ def test_tl_polymorphic_reader_and_gzip() -> None:
     assert isinstance(unpacked_obj, User)
     assert unpacked_obj.id == 987654
     assert unpacked_obj.first_name == "GzipUser"
+
+
+def test_upload_file_deserialization_with_storage_file_type() -> None:
+    from aiogram.raw.types import StorageFileUnknown, UploadFile
+
+    # UploadFile payload with storage.fileUnknown (0x40bc6f52), mtime=1700000000, bytes=b"FILE_CHUNK"
+    upload_file = UploadFile(type=StorageFileUnknown(), mtime=1700000000, bytes=b"FILE_CHUNK")
+    raw_bytes = upload_file.write()
+
+    read_obj = read_tl_object(io.BytesIO(raw_bytes))
+    assert isinstance(read_obj, UploadFile)
+    assert isinstance(read_obj.type, StorageFileUnknown)
+    assert read_obj.mtime == 1700000000
+    assert read_obj.bytes == b"FILE_CHUNK"
+

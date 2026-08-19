@@ -66,6 +66,7 @@ class TCPConnection:
 
         # Send transport header if required
         if self.transport.HEADER:
+            assert self.writer is not None
             self.writer.write(self.transport.HEADER)
             await self.writer.drain()
 

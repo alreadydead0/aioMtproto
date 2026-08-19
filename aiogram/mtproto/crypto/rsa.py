@@ -153,22 +153,32 @@ def find_rsa_key(fingerprints: list[int]) -> RSAKey | None:
 
 def rsa_encrypt(data: bytes, key: RSAKey) -> bytes:
     """
-    Encrypt data with Telegram RSA key using Telegram MTProto padding:
-    padded = sha1(data) + data + random_bytes (total 255 bytes).
-    ciphertext = (padded_int ^ e) mod n.
+    Encrypt data with Telegram RSA key using Telegram MTProto padding.
 
-    :param data: Data to encrypt (e.g. PQ inner data).
-    :param key: RSAKey instance.
-    :return: 256-byte encrypted ciphertext.
+    Telegram MTProto RSA scheme (NOT standard PKCS#1 / OAEP):
+        plaintext = SHA1(data) + data + random_padding  →  exactly 255 bytes
+        ciphertext = pow(int_from_255_bytes, e, n)       →  256 bytes output
+
+    The plaintext is 255 bytes (not 256) because Telegram pads to 255 so the
+    resulting big integer is guaranteed to be smaller than the 2048-bit modulus.
+
+    :param data: Data to encrypt (e.g. p_q_inner_data_dc serialised bytes).
+    :param key: RSAKey instance with n and e.
+    :return: 256-byte RSA ciphertext.
     """
-    sha1_hash = hashlib.sha1(data).digest()
-    data_with_hash = sha1_hash + data
+    sha1_hash = hashlib.sha1(data).digest()   # 20 bytes
+    data_with_hash = sha1_hash + data          # 20 + len(data) bytes
+    # Pad to exactly 255 bytes so the integer is < n
     pad_len = 255 - len(data_with_hash)
     if pad_len < 0:
-        msg = f"Data is too long for 2048-bit RSA encryption (got {len(data)} bytes)"
+        msg = (
+            f"Data too long for Telegram RSA: SHA1+data is {len(data_with_hash)} bytes "
+            f"(max 255). Raw data length: {len(data)} bytes."
+        )
         raise ValueError(msg)
 
-    padded = data_with_hash + os.urandom(pad_len)
-    data_int = int.from_bytes(padded, "big") % key.n
+    padded = data_with_hash + os.urandom(pad_len)  # exactly 255 bytes
+    data_int = int.from_bytes(padded, "big")        # fits in < 2048 bits
     enc_int = pow(data_int, key.e, key.n)
-    return enc_int.to_bytes(256, "big")
+    return enc_int.to_bytes(256, "big")             # 256-byte output
+

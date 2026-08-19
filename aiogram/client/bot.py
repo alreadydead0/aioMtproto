@@ -590,6 +590,15 @@ class Bot:
         :param chunk_size: File chunks size, defaults to 64 kb
         :param seek: Go to start of file when downloading is finished. Used only for destination with :class:`typing.BinaryIO` type, defaults to True
         """
+        if self.mtproto is not None:
+            file_size = getattr(file, "file_size", None)
+            return await self.mtproto.download_file(
+                location=file,
+                file_size=file_size,
+                destination=destination,
+                progress=getattr(self, "_default_download_progress", None),
+            )
+
         if isinstance(file, str):
             file_id = file
         else:

@@ -44,3 +44,13 @@ class BaseMTProtoSession(abc.ABC):
     async def delete(self) -> None:
         """Delete session state."""
         raise NotImplementedError
+
+    async def invalidate_auth_key(self) -> None:
+        """
+        Atomically clear auth_key, server_salt, and user credentials.
+        """
+        data = await self.load()
+        data.auth_key = None
+        data.server_salt = 0
+        data.user_id = None
+        await self.save(data)

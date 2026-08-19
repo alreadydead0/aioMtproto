@@ -44,12 +44,17 @@ TEST_DCS: dict[int, DataCenter] = {
 
 def get_dc(dc_id: int, test_mode: bool = False) -> DataCenter:
     """
-    Get DataCenter configuration by DC ID. Default is DC 2 (Production).
+    Get DataCenter configuration by DC ID.
+
+    :param dc_id: Telegram Data Center ID (1-5 for production, 1-3 for test).
+    :param test_mode: Connect to Telegram Test Data Centers.
+    :return: DataCenter instance.
+    :raises ValueError: If dc_id is not a recognized Data Center ID.
     """
     dc_map = TEST_DCS if test_mode else PROD_DCS
     if dc_id in dc_map:
         return dc_map[dc_id]
-    # Default fallback to DC 2
-    return dc_map.get(
-        2, DataCenter(dc_id=dc_id, ip_address="149.154.167.51", port=443, is_test=test_mode)
-    )
+    env_name = "test" if test_mode else "production"
+    msg = f"Unknown DC ID: {dc_id} for {env_name} environment (valid: {sorted(dc_map.keys())})"
+    raise ValueError(msg)
+

@@ -5,9 +5,13 @@ aiogram MTProto and API error classes.
 from __future__ import annotations
 
 from .mtproto import (
+    AuthKeyInvalid,
+    AuthKeyNotFound,
+    AuthKeyUnregistered,
     BadRequest,
     CryptoError,
     FileMigrate,
+    FileReferenceExpired,
     FloodWait,
     Forbidden,
     InternalServerError,
@@ -29,9 +33,13 @@ from .mtproto import (
 )
 
 __all__ = (
+    "AuthKeyInvalid",
+    "AuthKeyNotFound",
+    "AuthKeyUnregistered",
     "BadRequest",
     "CryptoError",
     "FileMigrate",
+    "FileReferenceExpired",
     "FloodWait",
     "Forbidden",
     "InternalServerError",

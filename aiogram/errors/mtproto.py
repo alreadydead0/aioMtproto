@@ -19,6 +19,12 @@ class TransportError(MTProtoError):
     """
 
 
+class AuthKeyNotFound(TransportError):
+    """
+    -404 AuthKey not found or unregistered on the Telegram server.
+    """
+
+
 class CryptoError(MTProtoError):
     """
     Cryptographic verification or decryption error.
@@ -45,6 +51,30 @@ class BadRequest(RPCError):
 class Unauthorized(RPCError):
     """
     401 Unauthorized error.
+    """
+
+
+class AuthKeyUnregistered(Unauthorized):
+    """
+    401 AUTH_KEY_UNREGISTERED error: AuthKey is not registered in the auth system.
+    """
+
+
+class AuthKeyInvalid(Unauthorized):
+    """
+    401 AUTH_KEY_INVALID error: AuthKey is invalid.
+    """
+
+
+class BadMsgNotificationError(RPCError):
+    """
+    MTProto BadMsgNotification error.
+    """
+
+
+class BadServerSaltError(RPCError):
+    """
+    MTProto BadServerSalt error.
     """
 
 
@@ -88,6 +118,7 @@ class MigrationError(RPCError):
     def __init__(self, error_code: int, error_message: str, new_dc: int) -> None:
         super().__init__(error_code, error_message)
         self.new_dc = new_dc
+        self.dc_id = new_dc
 
 
 class FileMigrate(MigrationError):
@@ -111,6 +142,12 @@ class NetworkMigrate(MigrationError):
 class UserMigrate(MigrationError):
     """
     USER_MIGRATE_X error: User account belongs to a different DC.
+    """
+
+
+class FileReferenceExpired(BadRequest):
+    """
+    FILE_REFERENCE_EXPIRED (400) error: The file_reference of the media location has expired.
     """
 
 
@@ -148,6 +185,7 @@ def parse_rpc_error(error_code: int, error_message: str) -> RPCError:
     """
     Parse an RPC error response from Telegram into a specialized exception.
     """
+    error_message = error_message.strip()
     flood_match = re.match(r"^(?:FLOOD_WAIT_|SLOWMODE_WAIT_)(\d+)$", error_message)
     if flood_match:
         seconds = int(flood_match.group(1))
@@ -171,8 +209,14 @@ def parse_rpc_error(error_code: int, error_message: str) -> RPCError:
     if user_migrate_match:
         return UserMigrate(error_code, error_message, new_dc=int(user_migrate_match.group(1)))
 
+    if error_message == "FILE_REFERENCE_EXPIRED":
+        return FileReferenceExpired(error_code, error_message)
     if error_message == "SESSION_PASSWORD_NEEDED":
         return SessionPasswordNeeded(error_code, error_message)
+    if error_message == "AUTH_KEY_UNREGISTERED":
+        return AuthKeyUnregistered(error_code, error_message)
+    if error_message == "AUTH_KEY_INVALID":
+        return AuthKeyInvalid(error_code, error_message)
     if error_message == "PHONE_CODE_INVALID":
         return PhoneCodeInvalid(error_code, error_message)
     if error_message == "PHONE_CODE_EXPIRED":

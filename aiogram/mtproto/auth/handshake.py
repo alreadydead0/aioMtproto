@@ -11,7 +11,9 @@ import os
 import struct
 from typing import TYPE_CHECKING, Tuple
 
-from aiogram.mtproto.connection.tcp import TCPConnection
+if TYPE_CHECKING:
+    from aiogram.mtproto.connection.tcp import TCPConnection
+
 from aiogram.mtproto.crypto.aes_ige import aes_ige_decrypt, aes_ige_encrypt
 from aiogram.mtproto.crypto.auth_key import AuthKey
 from aiogram.mtproto.crypto.dh import (
@@ -45,6 +47,24 @@ from aiogram.raw.core.tl_core_types import (
 logger = logging.getLogger("aiogram.mtproto.handshake")
 
 
+def _check_transport_error(data: bytes, step: str) -> None:
+    """
+    During the plain (pre-auth) handshake the server sometimes returns a
+    4-byte signed error code instead of a TL message (e.g. when the RSA
+    encrypted payload is malformed or the DC is overloaded).
+
+    Detect this and raise a clean exception so the caller can retry rather
+    than propagating an opaque ``ValueError: Plain message too short``.
+    """
+    if len(data) == 4:
+        import struct
+        err = struct.unpack("<i", data)[0]
+        raise ConnectionError(
+            f"MTProto transport error during handshake ({step}): {err} "
+            f"(hex: {data.hex()})"
+        )
+
+
 async def do_handshake(conn: TCPConnection) -> tuple[AuthKey, int]:
     """
     Perform 3-step MTProto Diffie-Hellman Key Exchange with Telegram DC.
@@ -62,6 +82,7 @@ async def do_handshake(conn: TCPConnection) -> tuple[AuthKey, int]:
 
     await conn.send(plain_packet)
     resp_raw = await conn.receive()
+    _check_transport_error(resp_raw, "req_pq_multi")
     _, resp_body = MessageCodec.unpack_plain(resp_raw)
 
     resp = read_tl_object(io.BytesIO(resp_body))
@@ -113,6 +134,7 @@ async def do_handshake(conn: TCPConnection) -> tuple[AuthKey, int]:
     msg_id = id_gen.generate_msg_id()
     await conn.send(MessageCodec.pack_plain(msg_id, req_dh.write()))
     resp_raw = await conn.receive()
+    _check_transport_error(resp_raw, "req_DH_params")
     _, resp_body = MessageCodec.unpack_plain(resp_raw)
 
     resp_dh = read_tl_object(io.BytesIO(resp_body))
@@ -193,6 +215,7 @@ async def do_handshake(conn: TCPConnection) -> tuple[AuthKey, int]:
     msg_id = id_gen.generate_msg_id()
     await conn.send(MessageCodec.pack_plain(msg_id, set_dh.write()))
     resp_raw = await conn.receive()
+    _check_transport_error(resp_raw, "set_client_DH_params")
     _, resp_body = MessageCodec.unpack_plain(resp_raw)
 
     resp_dh_gen = read_tl_object(io.BytesIO(resp_body))

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import io
 import struct
-from typing import Any, BinaryIO, List, Optional
+from typing import Any, BinaryIO
 
 from aiogram.raw.core.primitives import (
     TLObject,
@@ -691,6 +691,35 @@ class Authorization(TLObject):
         return Authorization(user=user, setup_password_required=setup_pwd)
 
 
+class ExportedAuthorization(TLObject):
+    ID = 0xB434E2B8
+    QUALNAME = "auth.ExportedAuthorization"
+
+    def __init__(self, id: int, bytes_data: bytes) -> None:
+        self.id = id
+        self.bytes_data = bytes_data
+        self.bytes = bytes_data
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> ExportedAuthorization:
+        return ExportedAuthorization(
+            id=read_long(b),
+            bytes_data=read_bytes(b),
+        )
+
+
+class ExportedAuthorizationLegacy(TLObject):
+    ID = 0xDF969C2D
+    QUALNAME = "auth.ExportedAuthorizationLegacy"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> ExportedAuthorization:
+        return ExportedAuthorization(
+            id=read_int(b),
+            bytes_data=read_bytes(b),
+        )
+
+
 class InputFile(TLObject):
     ID = 0xF52FF12F
     QUALNAME = "types.InputFile"
@@ -744,3 +773,470 @@ class InputFileBig(TLObject):
             parts=read_int(b),
             name=read_string(b),
         )
+
+
+class InputFileLocation(TLObject):
+    pass
+
+
+class InputDocumentFileLocation(InputFileLocation):
+    ID = 0xBAD07584
+    QUALNAME = "types.InputDocumentFileLocation"
+
+    def __init__(
+        self, id: int, access_hash: int, file_reference: bytes, thumb_size: str = ""
+    ) -> None:
+        self.id = id
+        self.access_hash = access_hash
+        self.file_reference = file_reference
+        self.thumb_size = thumb_size
+
+    def write(self) -> bytes:
+        return (
+            struct.pack("<I", self.ID)
+            + write_long(self.id)
+            + write_long(self.access_hash)
+            + write_bytes(self.file_reference)
+            + write_string(self.thumb_size)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> InputDocumentFileLocation:
+        return InputDocumentFileLocation(
+            id=read_long(b),
+            access_hash=read_long(b),
+            file_reference=read_bytes(b),
+            thumb_size=read_string(b),
+        )
+
+
+class InputPhotoFileLocation(InputFileLocation):
+    ID = 0x40181FFE
+    QUALNAME = "types.InputPhotoFileLocation"
+
+    def __init__(
+        self, id: int, access_hash: int, file_reference: bytes, thumb_size: str = ""
+    ) -> None:
+        self.id = id
+        self.access_hash = access_hash
+        self.file_reference = file_reference
+        self.thumb_size = thumb_size
+
+    def write(self) -> bytes:
+        return (
+            struct.pack("<I", self.ID)
+            + write_long(self.id)
+            + write_long(self.access_hash)
+            + write_bytes(self.file_reference)
+            + write_string(self.thumb_size)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> InputPhotoFileLocation:
+        return InputPhotoFileLocation(
+            id=read_long(b),
+            access_hash=read_long(b),
+            file_reference=read_bytes(b),
+            thumb_size=read_string(b),
+        )
+
+
+class InputPeerPhotoFileLocation(InputFileLocation):
+    ID = 0x37257E96
+    QUALNAME = "types.InputPeerPhotoFileLocation"
+
+    def __init__(self, peer: TLObject, photo_id: int, big: bool = False) -> None:
+        self.peer = peer
+        self.photo_id = photo_id
+        self.big = big
+
+    def write(self) -> bytes:
+        flags = 1 if self.big else 0
+        return (
+            struct.pack("<II", self.ID, flags)
+            + self.peer.write()
+            + write_long(self.photo_id)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> InputPeerPhotoFileLocation:
+        flags = read_uint(b)
+        from aiogram.raw.all import read_tl_object
+
+        peer = read_tl_object(b)
+        photo_id = read_long(b)
+        return InputPeerPhotoFileLocation(peer=peer, photo_id=photo_id, big=bool(flags & 1))
+
+
+class UploadFile(TLObject):
+    ID = 0x096A18D5
+    QUALNAME = "types.upload.File"
+
+    def __init__(self, type: Any = None, mtime: int = 0, bytes: bytes = b"") -> None:
+        self.type = type
+        self.mtime = mtime
+        self.bytes = bytes
+
+    def write(self) -> bytes:
+        type_bytes = (
+            self.type.write() if hasattr(self.type, "write") else struct.pack("<I", 0x40BC6F52)
+        )
+        return (
+            struct.pack("<I", self.ID)
+            + type_bytes
+            + write_int(self.mtime)
+            + write_bytes(self.bytes)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UploadFile:
+        from aiogram.raw.all import read_tl_object
+
+        file_type = read_tl_object(b)
+        mtime = read_int(b)
+        content = read_bytes(b)
+        return UploadFile(type=file_type, mtime=mtime, bytes=content)
+
+
+class UploadFileCdnRedirect(TLObject):
+    ID = 0xF18CDA44
+    QUALNAME = "types.upload.FileCdnRedirect"
+
+    def __init__(
+        self,
+        dc_id: int,
+        file_token: bytes,
+        encryption_key: bytes,
+        encryption_iv: bytes,
+        file_hashes: list[Any] | None = None,
+    ) -> None:
+        self.dc_id = dc_id
+        self.file_token = file_token
+        self.encryption_key = encryption_key
+        self.encryption_iv = encryption_iv
+        self.file_hashes = file_hashes or []
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> UploadFileCdnRedirect:
+        from aiogram.raw.all import read_tl_object
+
+        dc_id = read_int(b)
+        file_token = read_bytes(b)
+        encryption_key = read_bytes(b)
+        encryption_iv = read_bytes(b)
+        file_hashes = read_vector(b, read_tl_object)
+        return UploadFileCdnRedirect(
+            dc_id=dc_id,
+            file_token=file_token,
+            encryption_key=encryption_key,
+            encryption_iv=encryption_iv,
+            file_hashes=file_hashes,
+        )
+
+
+class StorageFileUnknown(TLObject):
+    ID = 0x40BC6F52
+    QUALNAME = "types.storage.FileUnknown"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFileUnknown:
+        return StorageFileUnknown()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFilePartial(StorageFileUnknown):
+    ID = 0x40BC6F52
+    QUALNAME = "types.storage.FilePartial"
+
+
+class StorageFileJpeg(TLObject):
+    ID = 0x007EFE0E
+    QUALNAME = "types.storage.FileJpeg"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFileJpeg:
+        return StorageFileJpeg()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFileGif(TLObject):
+    ID = 0xCAE81513
+    QUALNAME = "types.storage.FileGif"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFileGif:
+        return StorageFileGif()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFilePng(TLObject):
+    ID = 0x0A4F63C0
+    QUALNAME = "types.storage.FilePng"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFilePng:
+        return StorageFilePng()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFilePdf(TLObject):
+    ID = 0xAE1E508D
+    QUALNAME = "types.storage.FilePdf"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFilePdf:
+        return StorageFilePdf()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFileMp3(TLObject):
+    ID = 0x528A0699
+    QUALNAME = "types.storage.FileMp3"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFileMp3:
+        return StorageFileMp3()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFileMov(TLObject):
+    ID = 0x4B09EBBC
+    QUALNAME = "types.storage.FileMov"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFileMov:
+        return StorageFileMov()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFileMp4(TLObject):
+    ID = 0xB3CEA0E4
+    QUALNAME = "types.storage.FileMp4"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFileMp4:
+        return StorageFileMp4()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class StorageFileWebp(TLObject):
+    ID = 0x1081464C
+    QUALNAME = "types.storage.FileWebp"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> StorageFileWebp:
+        return StorageFileWebp()
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+
+class DocumentAttribute(TLObject):
+    ID = 0
+    QUALNAME = "types.DocumentAttribute"
+
+
+class DocumentAttributeFilename(DocumentAttribute):
+    ID = 0x15590068
+    QUALNAME = "types.DocumentAttributeFilename"
+
+    def __init__(self, file_name: str) -> None:
+        self.file_name = file_name
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID) + write_string(self.file_name)
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> DocumentAttributeFilename:
+        return DocumentAttributeFilename(file_name=read_string(b))
+
+
+class DocumentAttributeVideo(DocumentAttribute):
+    ID = 0x0EF02CED
+    QUALNAME = "types.DocumentAttributeVideo"
+
+    def __init__(
+        self,
+        duration: float = 0.0,
+        w: int = 0,
+        h: int = 0,
+        supports_streaming: bool = True,
+        round_message: bool = False,
+    ) -> None:
+        self.duration = duration
+        self.w = w
+        self.h = h
+        self.supports_streaming = supports_streaming
+        self.round_message = round_message
+
+    def write(self) -> bytes:
+        flags = 0
+        if self.round_message:
+            flags |= 1 << 0
+        if self.supports_streaming:
+            flags |= 1 << 1
+        return (
+            struct.pack("<II", self.ID, flags)
+            + write_double(self.duration)
+            + write_int(self.w)
+            + write_int(self.h)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> DocumentAttributeVideo:
+        flags = read_uint(b)
+        duration = read_double(b)
+        w = read_int(b)
+        h = read_int(b)
+        return DocumentAttributeVideo(
+            duration=duration,
+            w=w,
+            h=h,
+            supports_streaming=bool(flags & (1 << 1)),
+            round_message=bool(flags & (1 << 0)),
+        )
+
+
+class DocumentAttributeAudio(DocumentAttribute):
+    ID = 0x9852F9C6
+    QUALNAME = "types.DocumentAttributeAudio"
+
+    def __init__(
+        self,
+        duration: int = 0,
+        title: str | None = None,
+        performer: str | None = None,
+        voice: bool = False,
+    ) -> None:
+        self.duration = duration
+        self.title = title
+        self.performer = performer
+        self.voice = voice
+
+    def write(self) -> bytes:
+        flags = 0
+        if self.title is not None:
+            flags |= 1 << 0
+        if self.performer is not None:
+            flags |= 1 << 1
+        if self.voice:
+            flags |= 1 << 10
+        res = struct.pack("<II", self.ID, flags) + write_int(self.duration)
+        if self.title is not None:
+            res += write_string(self.title)
+        if self.performer is not None:
+            res += write_string(self.performer)
+        return res
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> DocumentAttributeAudio:
+        flags = read_uint(b)
+        duration = read_int(b)
+        title = read_string(b) if bool(flags & 1) else None
+        performer = read_string(b) if bool(flags & (1 << 1)) else None
+        return DocumentAttributeAudio(
+            duration=duration,
+            title=title,
+            performer=performer,
+            voice=bool(flags & (1 << 10)),
+        )
+
+
+class InputMedia(TLObject):
+    ID = 0
+    QUALNAME = "types.InputMedia"
+
+
+class InputMediaUploadedDocument(InputMedia):
+    ID = 0x5B38C6C1
+    QUALNAME = "types.InputMediaUploadedDocument"
+
+    def __init__(
+        self,
+        file: TLObject,
+        mime_type: str = "application/octet-stream",
+        attributes: list[TLObject] | None = None,
+        thumb: TLObject | None = None,
+        stickers: list[TLObject] | None = None,
+        ttl_seconds: int | None = None,
+        nosound_video: bool = False,
+        force_file: bool = False,
+        spoiler: bool = False,
+    ) -> None:
+        self.file = file
+        self.mime_type = mime_type
+        self.attributes = attributes or []
+        self.thumb = thumb
+        self.stickers = stickers
+        self.ttl_seconds = ttl_seconds
+        self.nosound_video = nosound_video
+        self.force_file = force_file
+        self.spoiler = spoiler
+
+    def write(self) -> bytes:
+        flags = 0
+        if self.stickers is not None:
+            flags |= 1 << 0
+        if self.ttl_seconds is not None:
+            flags |= 1 << 1
+        if self.thumb is not None:
+            flags |= 1 << 2
+        if self.nosound_video:
+            flags |= 1 << 3
+        if self.force_file:
+            flags |= 1 << 4
+        if self.spoiler:
+            flags |= 1 << 5
+
+        res = struct.pack("<II", self.ID, flags) + self.file.write()
+        if self.thumb is not None:
+            res += self.thumb.write()
+        res += write_string(self.mime_type)
+        res += write_vector(self.attributes, lambda a: a.write())
+        if self.stickers is not None:
+            res += write_vector(self.stickers, lambda s: s.write())
+        if self.ttl_seconds is not None:
+            res += write_int(self.ttl_seconds)
+        return res
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> InputMediaUploadedDocument:
+        from aiogram.raw.all import read_tl_object
+
+        flags = read_uint(b)
+        file = read_tl_object(b)
+        thumb = read_tl_object(b) if bool(flags & (1 << 2)) else None
+        mime_type = read_string(b)
+        attributes = read_vector(b, read_tl_object)
+        stickers = read_vector(b, read_tl_object) if bool(flags & 1) else None
+        ttl_seconds = read_int(b) if bool(flags & (1 << 1)) else None
+        return InputMediaUploadedDocument(
+            file=file,
+            mime_type=mime_type,
+            attributes=attributes,
+            thumb=thumb,
+            stickers=stickers,
+            ttl_seconds=ttl_seconds,
+            nosound_video=bool(flags & (1 << 3)),
+            force_file=bool(flags & (1 << 4)),
+            spoiler=bool(flags & (1 << 5)),
+        )
+
+
+

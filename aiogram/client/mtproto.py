@@ -5,15 +5,19 @@ MTProto Client for aiogram.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 from collections.abc import AsyncGenerator, Callable
-from typing import Any, List, Optional, TypeVar, Union
+from typing import Any, BinaryIO, List, Optional, TypeVar, Union
+
+logger = logging.getLogger("aiogram.client.mtproto")
 
 from aiogram import types as tg_types
 from aiogram.enums import ChatType
 from aiogram.mtproto.auth.handshake import do_handshake
 from aiogram.mtproto.connection.dc import DataCenter, get_dc
+from aiogram.mtproto.connection.dc_manager import DCClientSession, DCManager
 from aiogram.mtproto.connection.tcp import TCPConnection
 from aiogram.mtproto.connection.transport import BaseTransport, IntermediateTransport
 from aiogram.mtproto.protocol.rpc import RPCEngine
@@ -76,51 +80,58 @@ class MTProtoClient:
         else:
             self.session_storage = session
 
-        self.session_data: SessionData | None = None
-        self.connection: TCPConnection | None = None
-        self.rpc: RPCEngine | None = None
-        self.me: tg_types.User | None = None
+        self.dc_manager = DCManager(
+            api_id=self.api_id,
+            api_hash=self.api_hash,
+            main_dc_id=self.dc_id,
+            test_mode=self.test_mode,
+            bot_token=self.bot_token,
+            transport_factory=lambda: self.transport,
+            session_storage=self.session_storage,
+        )
+        self.dc_manager.add_update_handler(self._on_raw_update)
 
+        self.session_data: SessionData | None = None
+        self.me: tg_types.User | None = None
         self._update_queue: asyncio.Queue[tg_types.Update] = asyncio.Queue()
         self._update_counter = 1
-        self._is_connected = False
+
+    @property
+    def connection(self) -> TCPConnection | None:
+        main = self.dc_manager._sessions.get(self.dc_manager.main_dc_id)
+        return main.connection if main else None
+
+    @property
+    def rpc(self) -> RPCEngine | None:
+        main = self.dc_manager._sessions.get(self.dc_manager.main_dc_id)
+        return main.rpc if main else None
 
     @property
     def is_connected(self) -> bool:
-        return self._is_connected and self.connection is not None and self.connection.is_connected
+        main = self.dc_manager._sessions.get(self.dc_manager.main_dc_id)
+        return main is not None and main.is_ready
+
+    async def get_media_client(self, dc_id: int) -> DCClientSession:
+        """
+        Get or spawn an MTProto client connected and authorized to a specific Data Center.
+        """
+        return await self.dc_manager.get_media_client(dc_id)
 
     async def connect(self) -> None:
         """
         Connect to Telegram MTProto, load/generate AuthKey, and start RPC engine.
         """
-        if self.is_connected:
-            return
-
-        self.session_data = await self.session_storage.load()
-        dc = get_dc(self.session_data.dc_id or self.dc_id, test_mode=self.test_mode)
-        self.connection = TCPConnection(dc=dc, transport=self.transport)
-
-        await self.connection.connect()
-
-        # Generate AuthKey via 3-step DH handshake if not present
-        if not self.session_data.auth_key:
-            auth_key, server_salt = await do_handshake(self.connection)
-            self.session_data.auth_key = auth_key
-            self.session_data.server_salt = server_salt
-            self.session_data.dc_id = dc.dc_id
-            self.session_data.server_address = dc.ip_address
-            self.session_data.port = dc.port
-            await self.session_storage.save(self.session_data)
-
-        self.rpc = RPCEngine(
-            connection=self.connection,
-            auth_key=self.session_data.auth_key,
-            server_salt=self.session_data.server_salt,
-            api_id=self.api_id,
+        main_client = await self.dc_manager.get_dc_client(
+            self.dc_manager.main_dc_id, is_media=False
         )
-        self.rpc.add_update_handler(self._on_raw_update)
-        self.rpc.start()
-        self._is_connected = True
+        self.session_data = await self.session_storage.load()
+        self.dc_id = self.dc_manager.main_dc_id
+
+        if self.bot_token and not getattr(self.session_data, "user_id", None):
+            try:
+                await self.sign_in_bot()
+            except Exception as e:
+                logger.debug("Auto sign_in_bot in connect: %s", e)
 
     def _on_raw_update(self, raw_update_obj: Any) -> None:
         """
@@ -131,29 +142,39 @@ class MTProtoClient:
         for upd in normalized_updates:
             self._update_queue.put_nowait(upd)
 
-    async def disconnect(self) -> None:
+    async def updates_stream(self) -> AsyncGenerator[tg_types.Update, None]:
         """
-        Disconnect from MTProto and save session state.
-        """
-        self._is_connected = False
-        if self.rpc:
-            if self.session_data:
-                self.session_data.server_salt = self.rpc.server_salt
-                await self.session_storage.save(self.session_data)
-            await self.rpc.stop()
-            self.rpc = None
-        if self.connection:
-            await self.connection.close()
-            self.connection = None
-
-    async def invoke(self, query: TLRequest[T], timeout: float = 30.0) -> T:
-        """
-        Execute raw Telegram MTProto RPC query.
+        Stream normalized Telegram updates from the MTProto event loop.
         """
         if not self.is_connected:
             await self.connect()
-        assert self.rpc is not None
-        return await self.rpc.invoke(query, timeout=timeout)
+        while self.is_connected:
+            try:
+                update = await asyncio.wait_for(self._update_queue.get(), timeout=1.0)
+                yield update
+            except asyncio.TimeoutError:
+                continue
+
+    async def disconnect(self) -> None:
+        """
+        Disconnect from MTProto and close all active DC sessions.
+        """
+        if self.session_data and self.rpc:
+            self.session_data.server_salt = self.rpc.server_salt
+            await self.session_storage.save(self.session_data)
+        await self.dc_manager.close_all()
+
+    async def invoke(
+        self, query: TLRequest[T], timeout: float = 30.0, target_dc_id: int | None = None
+    ) -> T:
+        """
+        Execute raw Telegram MTProto RPC query with automatic AuthKey regeneration,
+        automatic DC migration (USER_MIGRATE, NETWORK_MIGRATE, PHONE_MIGRATE),
+        and AUTH_KEY_UNREGISTERED recovery.
+        """
+        res = await self.dc_manager.invoke(query, timeout=timeout, target_dc_id=target_dc_id)
+        self.dc_id = self.dc_manager.main_dc_id
+        return res
 
     async def sign_in_bot(self, token: str | None = None) -> tg_types.User:
         """
@@ -234,6 +255,9 @@ class MTProtoClient:
         if self.me is not None:
             return self.me
 
+        if self.bot_token:
+            return await self.sign_in_bot()
+
         users_res = await self.invoke(raw_funcs.users.GetUsers(id=[raw_types.InputPeerSelf()]))
         if users_res and len(users_res) > 0:
             raw_user = users_res[0]
@@ -313,19 +337,6 @@ class MTProtoClient:
         await self.invoke(raw_funcs.messages.DeleteMessages(id=message_ids, revoke=revoke))
         return True
 
-    async def updates_stream(self) -> AsyncGenerator[tg_types.Update, None]:
-        """
-        Async generator yielding normalized updates received from MTProto stream.
-        """
-        if not self.is_connected:
-            await self.connect()
-        while self.is_connected:
-            try:
-                update = await asyncio.wait_for(self._update_queue.get(), timeout=1.0)
-                yield update
-            except asyncio.TimeoutError:
-                continue
-
     async def upload_file(
         self,
         source: Any,
@@ -341,6 +352,126 @@ class MTProtoClient:
         uploader = FileUploader(self, workers=workers)
         return await uploader.upload(source=source, file_name=file_name, progress=progress)
 
+    async def send_document(
+        self,
+        chat_id: int | str,
+        document: Any,
+        file_name: str | None = None,
+        caption: str = "",
+        mime_type: str = "application/octet-stream",
+        reply_to_message_id: int | None = None,
+        progress: Callable[[int, int], None] | None = None,
+        workers: int = 8,
+        force_file: bool = True,
+    ) -> tg_types.Message:
+        """
+        Upload and send any document/file up to 2GB via MTProto without Bot API 50MB HTTP limit.
+        """
+        if isinstance(document, (raw_types.InputFile, raw_types.InputFileBig)):
+            input_file = document
+        else:
+            input_file = await self.upload_file(
+                source=document,
+                file_name=file_name,
+                progress=progress,
+                workers=workers,
+            )
+
+        actual_name = file_name or getattr(input_file, "name", "file.bin")
+        attributes: list[raw_types.TLObject] = [
+            raw_types.DocumentAttributeFilename(file_name=actual_name)
+        ]
+        media = raw_types.InputMediaUploadedDocument(
+            file=input_file,
+            mime_type=mime_type,
+            attributes=attributes,
+            force_file=force_file,
+        )
+        peer = _to_input_peer(chat_id)
+        random_id = random.getrandbits(63)
+        await self.invoke(
+            raw_funcs.messages.SendMedia(
+                peer=peer,
+                media=media,
+                message=caption,
+                random_id=random_id,
+                reply_to_msg_id=reply_to_message_id,
+            )
+        )
+        chat_id_int = chat_id if isinstance(chat_id, int) else 0
+        chat = tg_types.Chat(id=chat_id_int, type=ChatType.PRIVATE)
+        return tg_types.Message(
+            message_id=random_id & 0x7FFFFFFF,
+            date=tg_types.base.UNSET,
+            chat=chat,
+            from_user=self.me,
+            text=caption,
+        )
+
+    async def send_video(
+        self,
+        chat_id: int | str,
+        video: Any,
+        file_name: str | None = None,
+        caption: str = "",
+        duration: float = 0.0,
+        width: int = 0,
+        height: int = 0,
+        supports_streaming: bool = True,
+        reply_to_message_id: int | None = None,
+        progress: Callable[[int, int], None] | None = None,
+        workers: int = 8,
+    ) -> tg_types.Message:
+        """
+        Upload and send any video up to 2GB via MTProto without Bot API 50MB HTTP limit.
+        """
+        if isinstance(video, (raw_types.InputFile, raw_types.InputFileBig)):
+            input_file = video
+        else:
+            input_file = await self.upload_file(
+                source=video,
+                file_name=file_name,
+                progress=progress,
+                workers=workers,
+            )
+
+        actual_name = file_name or getattr(input_file, "name", "video.mp4")
+        attributes: list[raw_types.TLObject] = [
+            raw_types.DocumentAttributeFilename(file_name=actual_name),
+            raw_types.DocumentAttributeVideo(
+                duration=duration,
+                w=width,
+                h=height,
+                supports_streaming=supports_streaming,
+            ),
+        ]
+        media = raw_types.InputMediaUploadedDocument(
+            file=input_file,
+            mime_type="video/mp4",
+            attributes=attributes,
+            force_file=False,
+        )
+        peer = _to_input_peer(chat_id)
+        random_id = random.getrandbits(63)
+        await self.invoke(
+            raw_funcs.messages.SendMedia(
+                peer=peer,
+                media=media,
+                message=caption,
+                random_id=random_id,
+                reply_to_msg_id=reply_to_message_id,
+            )
+        )
+        chat_id_int = chat_id if isinstance(chat_id, int) else 0
+        chat = tg_types.Chat(id=chat_id_int, type=ChatType.PRIVATE)
+        return tg_types.Message(
+            message_id=random_id & 0x7FFFFFFF,
+            date=tg_types.base.UNSET,
+            chat=chat,
+            from_user=self.me,
+            text=caption,
+        )
+
     async def download_file(
         self,
         location: Any,
@@ -348,7 +479,8 @@ class MTProtoClient:
         destination: Any = None,
         progress: Callable[[int, int], None] | None = None,
         workers: int = 8,
-    ) -> bytes | str:
+        refresh_location: Any = None,
+    ) -> bytes | str | BinaryIO:
         """
         Download file using multi-worker parallel transfer engine with direct disk streaming.
         """
@@ -360,6 +492,7 @@ class MTProtoClient:
             file_size=file_size,
             destination=destination,
             progress=progress,
+            refresh_location=refresh_location,
         )
 
     async def export_session_string(self) -> str:

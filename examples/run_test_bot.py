@@ -11,9 +11,11 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
 
-API_ID = 9241668
-API_HASH = "99f6e5250ed7ef3a09686190c730f294"
-BOT_TOKEN = "7597391690:AAGJW5ncXDILbBvUqu1epeKtrQyFth75xKE"
+import os
+
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 router = Router()
 

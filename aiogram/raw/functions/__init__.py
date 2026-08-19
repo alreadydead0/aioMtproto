@@ -97,7 +97,7 @@ class auth:
             return Authorization.read(b)
 
     class ImportBotAuthorization(TLRequest[Authorization]):
-        ID = 0x67A3FFCA
+        ID = 0x67A3FF2C
         QUALNAME = "functions.auth.ImportBotAuthorization"
 
         def __init__(self, api_id: int, api_hash: str, bot_auth_token: str) -> None:
@@ -112,6 +112,40 @@ class auth:
                 + write_int(self.api_id)
                 + write_string(self.api_hash)
                 + write_string(self.bot_auth_token)
+            )
+
+        def read_result(self, b: BinaryIO) -> Authorization:
+            read_uint(b)
+            return Authorization.read(b)
+
+    class ExportAuthorization(TLRequest[Any]):
+        ID = 0xE5BFFFCD
+        QUALNAME = "functions.auth.ExportAuthorization"
+
+        def __init__(self, dc_id: int) -> None:
+            self.dc_id = dc_id
+
+        def write(self) -> bytes:
+            return struct.pack("<I", self.ID) + write_int(self.dc_id)
+
+        def read_result(self, b: BinaryIO) -> Any:
+            from aiogram.raw.all import read_tl_object
+
+            return read_tl_object(b)
+
+    class ImportAuthorization(TLRequest[Authorization]):
+        ID = 0xA57A7DAD
+        QUALNAME = "functions.auth.ImportAuthorization"
+
+        def __init__(self, id: int, bytes_data: bytes) -> None:
+            self.id = id
+            self.bytes_data = bytes_data
+
+        def write(self) -> bytes:
+            return (
+                struct.pack("<I", self.ID)
+                + write_long(self.id)
+                + write_bytes(self.bytes_data)
             )
 
         def read_result(self, b: BinaryIO) -> Authorization:
@@ -203,6 +237,42 @@ class messages:
             if self.reply_to_msg_id is not None:
                 # InputReplyToMessage constructor (0x0bad8270)
                 res += struct.pack("<IIi", 0x0BAD8270, 0, self.reply_to_msg_id)
+            res += write_string(self.message)
+            res += write_long(self.random_id)
+            return res
+
+        def read_result(self, b: BinaryIO) -> Updates:
+            from aiogram.raw.all import read_tl_object
+
+            return read_tl_object(b)
+
+    class SendMedia(TLRequest[Updates]):
+        ID = 0x78524A6E
+        QUALNAME = "functions.messages.SendMedia"
+
+        def __init__(
+            self,
+            peer: InputPeer,
+            media: TLObject,
+            message: str = "",
+            random_id: int = 0,
+            reply_to_msg_id: int | None = None,
+        ) -> None:
+            self.peer = peer
+            self.media = media
+            self.message = message
+            self.random_id = random_id
+            self.reply_to_msg_id = reply_to_msg_id
+
+        def write(self) -> bytes:
+            flags = 0
+            if self.reply_to_msg_id is not None:
+                flags |= 1 << 0
+            res = struct.pack("<II", self.ID, flags) + self.peer.write()
+            if self.reply_to_msg_id is not None:
+                # InputReplyToMessage (ID=0x73ffcc13, reply_to_msg_id=...)
+                res += struct.pack("<III", 0x73FFCC13, 0, self.reply_to_msg_id)
+            res += self.media.write()
             res += write_string(self.message)
             res += write_long(self.random_id)
             return res
@@ -341,7 +411,7 @@ class upload:
             return True
 
     class GetFile(TLRequest[Any]):
-        ID = 0xBE250526
+        ID = 0xBE5335BE
         QUALNAME = "functions.upload.GetFile"
 
         def __init__(self, location: TLObject, offset: int, limit: int) -> None:

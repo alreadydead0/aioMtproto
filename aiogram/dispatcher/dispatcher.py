@@ -208,11 +208,6 @@ class Dispatcher(Router):
 
         So you may not worry that the polling will stop working.
         """
-        if getattr(bot, "mtproto", None) is not None:
-            async for update in bot.mtproto.updates_stream():
-                yield update
-            return
-
         backoff = Backoff(config=backoff_config)
         get_updates = GetUpdates(timeout=polling_timeout, allowed_updates=allowed_updates)
         kwargs = {}
@@ -380,10 +375,7 @@ class Dispatcher(Router):
         :param kwargs:
         :return:
         """
-        if getattr(bot, "mtproto", None) is not None:
-            user: User = await bot.mtproto.get_me()
-        else:
-            user: User = await bot.me()
+        user: User = await bot.me()
         loggers.dispatcher.info(
             "Run polling for bot @%s id=%d - %r",
             user.username,

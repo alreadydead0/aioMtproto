@@ -110,8 +110,8 @@ class StringSession(BaseMTProtoSession):
                 try:
                     ip_str = str(ipaddress.ip_address(ip_bytes))
                 except ValueError:
-                    dc = get_dc(dc_id, is_test=bool(is_test_int))
-                    ip_str = dc.ip
+                    dc = get_dc(dc_id, test_mode=bool(is_test_int))
+                    ip_str = dc.ip_address
                 return SessionData(
                     dc_id=dc_id,
                     server_address=ip_str,
@@ -129,10 +129,10 @@ class StringSession(BaseMTProtoSession):
         if len(raw) == 267:
             try:
                 dc_id, is_test, auth_key_bytes, user_id, is_bot = struct.unpack(">B?256sQ?", raw)
-                dc = get_dc(dc_id, is_test=is_test)
+                dc = get_dc(dc_id, test_mode=is_test)
                 return SessionData(
                     dc_id=dc_id,
-                    server_address=dc.ip,
+                    server_address=dc.ip_address,
                     port=dc.port,
                     auth_key=AuthKey(auth_key_bytes),
                     user_id=user_id if user_id != 0 else None,
@@ -146,10 +146,10 @@ class StringSession(BaseMTProtoSession):
         if len(raw) in (262, 263):
             try:
                 dc_id, is_test, auth_key_bytes, user_id = struct.unpack(">B?256sI", raw[:262])
-                dc = get_dc(dc_id, is_test=is_test)
+                dc = get_dc(dc_id, test_mode=is_test)
                 return SessionData(
                     dc_id=dc_id,
-                    server_address=dc.ip,
+                    server_address=dc.ip_address,
                     port=dc.port,
                     auth_key=AuthKey(auth_key_bytes),
                     user_id=user_id if user_id != 0 else None,

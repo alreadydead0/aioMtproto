@@ -74,7 +74,9 @@ class IntermediateTransport(BaseTransport):
 
     async def read_packet(self, reader: asyncio.StreamReader) -> bytes:
         length_bytes = await reader.readexactly(4)
-        length = struct.unpack("<I", length_bytes)[0]
+        length = struct.unpack("<i", length_bytes)[0]
+        if length < 0:
+            return length_bytes
         return await reader.readexactly(length)
 
 
@@ -96,7 +98,9 @@ class PaddedIntermediateTransport(BaseTransport):
 
     async def read_packet(self, reader: asyncio.StreamReader) -> bytes:
         length_bytes = await reader.readexactly(4)
-        length = struct.unpack("<I", length_bytes)[0]
+        length = struct.unpack("<i", length_bytes)[0]
+        if length < 0:
+            return length_bytes
         # In padded intermediate, the whole padded buffer is read
         return await reader.readexactly(length)
 

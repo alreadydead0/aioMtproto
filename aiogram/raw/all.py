@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import io
 import struct
-from typing import Any, BinaryIO, Dict, Type
+from typing import Any, BinaryIO
 
 from aiogram.raw.core.primitives import TLObject, read_uint
 from aiogram.raw.core.tl_core_types import (
@@ -22,25 +22,45 @@ from aiogram.raw.core.tl_core_types import (
 )
 from aiogram.raw.types import (
     Authorization,
+    ExportedAuthorization,
+    ExportedAuthorizationLegacy,
+    DocumentAttributeAudio,
+    DocumentAttributeFilename,
+    DocumentAttributeVideo,
+    InputDocumentFileLocation,
     InputFile,
     InputFileBig,
+    InputMediaUploadedDocument,
     InputPeerChannel,
     InputPeerChat,
     InputPeerEmpty,
+    InputPeerPhotoFileLocation,
     InputPeerSelf,
     InputPeerUser,
+    InputPhotoFileLocation,
     Message,
     NearestDc,
     PeerChannel,
     PeerChat,
     PeerUser,
     SentCode,
+    StorageFileGif,
+    StorageFileJpeg,
+    StorageFileMov,
+    StorageFileMp3,
+    StorageFileMp4,
+    StorageFilePdf,
+    StorageFilePng,
+    StorageFileUnknown,
+    StorageFileWebp,
     UpdateNewMessage,
     Updates,
     UpdatesCombined,
     UpdateShort,
     UpdateShortChatMessage,
     UpdateShortMessage,
+    UploadFile,
+    UploadFileCdnRedirect,
     User,
 )
 
@@ -64,6 +84,24 @@ TL_REGISTRY: dict[int, type[TLObject]] = {
     InputPeerChannel.ID: InputPeerChannel,
     InputFile.ID: InputFile,
     InputFileBig.ID: InputFileBig,
+    InputDocumentFileLocation.ID: InputDocumentFileLocation,
+    InputPhotoFileLocation.ID: InputPhotoFileLocation,
+    InputPeerPhotoFileLocation.ID: InputPeerPhotoFileLocation,
+    InputMediaUploadedDocument.ID: InputMediaUploadedDocument,
+    DocumentAttributeFilename.ID: DocumentAttributeFilename,
+    DocumentAttributeVideo.ID: DocumentAttributeVideo,
+    DocumentAttributeAudio.ID: DocumentAttributeAudio,
+    UploadFile.ID: UploadFile,
+    UploadFileCdnRedirect.ID: UploadFileCdnRedirect,
+    StorageFileUnknown.ID: StorageFileUnknown,
+    StorageFileJpeg.ID: StorageFileJpeg,
+    StorageFileGif.ID: StorageFileGif,
+    StorageFilePng.ID: StorageFilePng,
+    StorageFilePdf.ID: StorageFilePdf,
+    StorageFileMp3.ID: StorageFileMp3,
+    StorageFileMov.ID: StorageFileMov,
+    StorageFileMp4.ID: StorageFileMp4,
+    StorageFileWebp.ID: StorageFileWebp,
     User.ID: User,
     Message.ID: Message,
     UpdateShort.ID: UpdateShort,
@@ -75,6 +113,8 @@ TL_REGISTRY: dict[int, type[TLObject]] = {
     NearestDc.ID: NearestDc,
     SentCode.ID: SentCode,
     Authorization.ID: Authorization,
+    ExportedAuthorization.ID: ExportedAuthorization,
+    ExportedAuthorizationLegacy.ID: ExportedAuthorizationLegacy,
 }
 
 
