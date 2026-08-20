@@ -1,0 +1,1 @@
+Significantly optimize MTProto file upload/download speeds using C-accelerated AES-IGE crypto (tgcrypto), thread-pool offloading for large payloads, non-blocking async disk I/O (aiofiles), per-DC session pooling (DCSessionPool) with token-bucket rate limiting, and TCP socket tuning.
