@@ -17,6 +17,8 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, BinaryIO
 
+import aiofiles
+
 from aiogram.errors.mtproto import (
     AuthKeyNotFound,
     AuthKeyUnregistered,
@@ -152,12 +154,13 @@ class FileDownloader:
         refreshed_count = 0
         refresh_lock = asyncio.Lock()
 
+        async_file_handle: Any = None
         file_handle: BinaryIO | None = None
         if isinstance(destination, str):
             parent_dir = os.path.dirname(destination)
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-            file_handle = open(destination, "wb")  # noqa: SIM115
+            async_file_handle = await aiofiles.open(destination, "wb")
         elif destination is not None:
             file_handle = destination
 
@@ -196,7 +199,7 @@ class FileDownloader:
                 logger.info("Media location successfully refreshed (count=%d)", refreshed_count)
                 return current_location
 
-        async def _fetch_chunk(offset: int) -> None:
+        async def _fetch_chunk(worker_idx: int, offset: int) -> None:
             nonlocal downloaded_bytes
             async with semaphore:
                 chunk_client = active_client
@@ -205,13 +208,25 @@ class FileDownloader:
                 while attempt < self.max_retries:
                     loc = current_location
                     try:
-                        result = await chunk_client.invoke(
-                            raw_funcs.upload.GetFile(
-                                location=loc,
-                                offset=offset,
-                                limit=self.chunk_size,
+                        from aiogram.mtproto.connection.dc_manager import DCSessionPool
+
+                        if isinstance(chunk_client, DCSessionPool):
+                            result = await chunk_client.invoke(
+                                raw_funcs.upload.GetFile(
+                                    location=loc,
+                                    offset=offset,
+                                    limit=self.chunk_size,
+                                ),
+                                worker_index=worker_idx,
                             )
-                        )
+                        else:
+                            result = await chunk_client.invoke(
+                                raw_funcs.upload.GetFile(
+                                    location=loc,
+                                    offset=offset,
+                                    limit=self.chunk_size,
+                                )
+                            )
                         chunk_data = _extract_bytes(result)
                         break
                     except FileReferenceExpired:
@@ -237,7 +252,10 @@ class FileDownloader:
                         await asyncio.sleep(min(0.5 * attempt, 3.0))
 
                 async with progress_lock:
-                    if file_handle:
+                    if async_file_handle:
+                        await async_file_handle.seek(offset)
+                        await async_file_handle.write(chunk_data)
+                    elif file_handle:
                         file_handle.seek(offset)
                         file_handle.write(chunk_data)
                     else:
@@ -248,10 +266,10 @@ class FileDownloader:
                             progress(downloaded_bytes, file_size)
 
         try:
-            await asyncio.gather(*(_fetch_chunk(off) for off in offsets))
+            await asyncio.gather(*(_fetch_chunk(idx % self.workers, off) for idx, off in enumerate(offsets)))
         finally:
-            if file_handle and isinstance(destination, str):
-                file_handle.close()
+            if async_file_handle:
+                await async_file_handle.close()
 
         if isinstance(destination, str):
             return destination
@@ -281,12 +299,13 @@ class FileDownloader:
         current_location: TLObject = location
         refreshed_count = 0
 
+        async_file_handle: Any = None
         file_handle: BinaryIO | None = None
         if isinstance(destination, str):
             parent_dir = os.path.dirname(destination)
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-            file_handle = open(destination, "wb")  # noqa: SIM115
+            async_file_handle = await aiofiles.open(destination, "wb")
         elif destination is not None:
             file_handle = destination
 
@@ -360,7 +379,9 @@ class FileDownloader:
                 if not chunk_data:
                     break
 
-                if file_handle:
+                if async_file_handle:
+                    await async_file_handle.write(chunk_data)
+                elif file_handle:
                     file_handle.write(chunk_data)
                 else:
                     buffer.extend(chunk_data)
@@ -376,8 +397,8 @@ class FileDownloader:
                     # Last partial chunk → transfer complete
                     break
         finally:
-            if file_handle and isinstance(destination, str):
-                file_handle.close()
+            if async_file_handle:
+                await async_file_handle.close()
 
         if isinstance(destination, str):
             return destination

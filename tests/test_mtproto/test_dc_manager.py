@@ -228,7 +228,7 @@ async def test_4_and_5_export_and_import_authorization() -> None:
             return self.rpc
 
         with patch.object(DCClientSession, "init_rpc", side_effect=fake_init_rpc, autospec=True):
-            media_client = await manager.get_media_client(4)
+            media_pool = await manager.get_media_client(4)
 
             assert any(
                 isinstance(r, raw_funcs.auth.ExportAuthorization) and r.dc_id == 4
@@ -238,8 +238,8 @@ async def test_4_and_5_export_and_import_authorization() -> None:
                 isinstance(r, raw_funcs.auth.ImportAuthorization) and r.id == 777
                 for r in media_invocations
             )
-            assert media_client.auth_imported is True
-            assert media_client.state == DCState.READY
+            assert media_pool.auth_imported is True
+            assert media_pool.is_ready is True
 
 
 @pytest.mark.asyncio
@@ -297,7 +297,7 @@ async def test_7_concurrent_authorization_races() -> None:
         patch.object(DCClientSession, "handshake", new_callable=AsyncMock) as mock_hs,
     ):
 
-        async def count_handshake() -> tuple[AuthKey, int]:
+        async def count_handshake(*args: Any, **kwargs: Any) -> tuple[AuthKey, int]:
             nonlocal handshake_count
             handshake_count += 1
             await asyncio.sleep(0.05)  # simulate network delay
@@ -317,11 +317,11 @@ async def test_7_concurrent_authorization_races() -> None:
             # Launch 5 concurrent get_media_client calls for DC 4
             results = await asyncio.gather(*(manager.get_media_client(4) for _ in range(5)))
 
-            # All 5 return the same instance
+            # All 5 return the same pool instance
             first = results[0]
             assert all(r is first for r in results)
-            # Handshakes: 1 for Main DC 2, 1 for Media DC 4
-            assert handshake_count == 2
+            # Handshakes: 1 for Main DC 2, 4 for Media DC 4 pool members
+            assert handshake_count == 1 + first.pool_size
 
 
 @pytest.mark.asyncio
@@ -471,11 +471,12 @@ async def test_12_concurrent_downloads_multi_dc_isolated() -> None:
         patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True),
         patch.object(DCClientSession, "handshake", new_callable=AsyncMock) as mock_hs,
     ):
-        mock_hs.side_effect = [
-            (create_fake_auth_key(), 1),  # Main DC 2
-            (create_fake_auth_key(), 2),  # Media DC 4
-            (create_fake_auth_key(), 3),  # Media DC 5
-        ]
+        async def mock_hs_side_effect(*args: Any, **kwargs: Any) -> tuple[AuthKey, int]:
+            self_obj = args[0] if args else kwargs.get("self")
+            dc_id = getattr(self_obj, "dc_id", 2)
+            return create_fake_auth_key(), dc_id
+
+        mock_hs.side_effect = mock_hs_side_effect
 
         def fake_init_rpc(self: DCClientSession, cb: Any = None) -> RPCEngine:
             self.rpc = MagicMock()
@@ -486,15 +487,17 @@ async def test_12_concurrent_downloads_multi_dc_isolated() -> None:
             return self.rpc
 
         with patch.object(DCClientSession, "init_rpc", side_effect=fake_init_rpc, autospec=True):
-            dc4_client, dc5_client = await asyncio.gather(
+            dc4_pool, dc5_pool = await asyncio.gather(
                 manager.get_media_client(4),
                 manager.get_media_client(5),
             )
 
-            assert dc4_client.dc_id == 4
-            assert dc5_client.dc_id == 5
-            assert dc4_client.auth_key != dc5_client.auth_key
-            assert dc4_client.session_id != dc5_client.session_id
+            assert dc4_pool.dc_id == 4
+            assert dc5_pool.dc_id == 5
+            dc4_session = await dc4_pool.get_session(0)
+            dc5_session = await dc5_pool.get_session(0)
+            assert dc4_session.auth_key != dc5_session.auth_key
+            assert dc4_session.session_id != dc5_session.session_id
 
 
 @pytest.mark.asyncio
@@ -897,12 +900,12 @@ async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
                 # 10 concurrent requests for DC 4
                 clients = await asyncio.gather(*(manager.get_media_client(4) for _ in range(10)))
 
-                # All returned the exact same client instance
+                # All returned the exact same pool instance
                 first = clients[0]
                 assert all(c is first for c in clients)
                 assert first.is_ready is True
 
-                # Handshakes: exactly 1 for DC 2 (rebuild) and exactly 1 for DC 4
+                # Handshakes: 1 for DC 2 (rebuild) and 4 for DC 4 pool members
                 assert main_handshake_count == 1
-                assert dc4_handshake_count == 1
+                assert dc4_handshake_count == first.pool_size
 

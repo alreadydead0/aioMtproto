@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from typing import TYPE_CHECKING, Optional
 
 from aiogram.mtproto.connection.dc import DataCenter, get_dc
@@ -59,6 +60,16 @@ class TCPConnection:
                 asyncio.open_connection(self.dc.ip_address, self.dc.port),
                 timeout=self.timeout,
             )
+            # Socket tuning for high-throughput MTProto
+            sock = self.writer.get_extra_info("socket")
+            if sock is not None and isinstance(sock, socket.socket):
+                try:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    # 1 MB receive and send buffers
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
+                except Exception as opt_err:
+                    logger.debug("Failed to set socket options on DC %d: %s", self.dc.dc_id, opt_err)
         except Exception as e:
             logger.error("Failed to connect to DC %d: %s", self.dc.dc_id, e)
             self._connected = False

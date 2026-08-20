@@ -7,9 +7,26 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-# Check for cryptographic backends
+import asyncio
+import concurrent.futures
+
+# Check for native IGE backends (tgcrypto / cryptg) first
+_HAS_TGCRYPTO = False
+_HAS_CRYPTG = False
 _HAS_CRYPTOGRAPHY = False
 _HAS_PYCRYPTODOME = False
+
+try:
+    import tgcrypto
+
+    _HAS_TGCRYPTO = True
+except ImportError:
+    try:
+        import cryptg
+
+        _HAS_CRYPTG = True
+    except ImportError:
+        pass
 
 try:
     from cryptography.hazmat.backends import default_backend
@@ -19,7 +36,7 @@ try:
 except ImportError:
     pass
 
-if not _HAS_CRYPTOGRAPHY:
+if not (_HAS_TGCRYPTO or _HAS_CRYPTG or _HAS_CRYPTOGRAPHY):
     try:
         from Cryptodome.Cipher import AES as _AES
 
@@ -513,6 +530,9 @@ def _get_cipher_ecb(key: bytes) -> tuple[Callable[[bytes], bytes], Callable[[byt
     return pure.encrypt_block, pure.decrypt_block
 
 
+THREAD_POOL_THRESHOLD = 64 * 1024  # 64 KB threshold for executor offloading
+
+
 def aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
     """
     Encrypt data using AES-256-IGE mode.
@@ -531,6 +551,11 @@ def aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
     if len(iv) != 32:
         msg = f"IV length must be 32 bytes (got {len(iv)})"
         raise ValueError(msg)
+
+    if _HAS_TGCRYPTO:
+        return tgcrypto.ige256_encrypt(data, key, iv)
+    if _HAS_CRYPTG:
+        return cryptg.encrypt_ige(data, key, iv)
 
     encrypt_block, _ = _get_cipher_ecb(key)
     iv1 = iv[:16]
@@ -569,6 +594,11 @@ def aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         msg = f"IV length must be 32 bytes (got {len(iv)})"
         raise ValueError(msg)
 
+    if _HAS_TGCRYPTO:
+        return tgcrypto.ige256_decrypt(data, key, iv)
+    if _HAS_CRYPTG:
+        return cryptg.decrypt_ige(data, key, iv)
+
     _, decrypt_block = _get_cipher_ecb(key)
     iv1 = iv[:16]
     iv2 = iv[16:]
@@ -585,3 +615,25 @@ def aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         iv2 = p
 
     return bytes(out)
+
+
+async def async_aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
+    """
+    Asynchronously encrypt data using AES-256-IGE mode.
+    Offloads to executor thread pool if payload size >= THREAD_POOL_THRESHOLD.
+    """
+    if len(data) >= THREAD_POOL_THRESHOLD:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, aes_ige_encrypt, data, key, iv)
+    return aes_ige_encrypt(data, key, iv)
+
+
+async def async_aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
+    """
+    Asynchronously decrypt data using AES-256-IGE mode.
+    Offloads to executor thread pool if payload size >= THREAD_POOL_THRESHOLD.
+    """
+    if len(data) >= THREAD_POOL_THRESHOLD:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, aes_ige_decrypt, data, key, iv)
+    return aes_ige_decrypt(data, key, iv)

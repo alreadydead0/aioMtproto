@@ -8,8 +8,10 @@ import asyncio
 import math
 import os
 import random
-from collections.abc import Callable, Generator
+from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, BinaryIO
+
+import aiofiles
 
 from aiogram.media.chunker import (
     BIG_FILE_THRESHOLD,
@@ -27,19 +29,19 @@ ProgressCallback = Callable[[int, int], None]
 MAX_PART_SIZE = 512 * 1024
 
 
-def _iter_file_chunks(
+async def _iter_file_chunks(
     source: str | bytes | BinaryIO,
     chunk_size: int,
-) -> Generator[tuple[int, bytes], None, None]:
+) -> AsyncGenerator[tuple[int, bytes], None]:
     """
     Yield ``(part_index, chunk_bytes)`` without loading the entire file into RAM.
     Supports file paths, raw bytes, and file-like objects.
     """
     if isinstance(source, str):
-        with open(source, "rb") as f:
+        async with aiofiles.open(source, "rb") as f:
             idx = 0
             while True:
-                chunk = f.read(chunk_size)
+                chunk = await f.read(chunk_size)
                 if not chunk:
                     break
                 yield idx, chunk
@@ -110,7 +112,7 @@ class FileUploader:
         lock = asyncio.Lock()
         queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(maxsize=self.workers * 2)
 
-        async def _worker() -> None:
+        async def _worker(worker_idx: int) -> None:
             nonlocal uploaded_bytes
             while True:
                 item = await queue.get()
@@ -122,22 +124,25 @@ class FileUploader:
                 for attempt in range(self.max_retries):
                     try:
                         if is_big:
-                            await self.client.invoke(
-                                raw_funcs.upload.SaveBigFilePart(
-                                    file_id=file_id,
-                                    file_part=part_index,
-                                    file_total_parts=total_parts,
-                                    bytes=part_bytes,
-                                )
+                            req = raw_funcs.upload.SaveBigFilePart(
+                                file_id=file_id,
+                                file_part=part_index,
+                                file_total_parts=total_parts,
+                                bytes=part_bytes,
                             )
                         else:
-                            await self.client.invoke(
-                                raw_funcs.upload.SaveFilePart(
-                                    file_id=file_id,
-                                    file_part=part_index,
-                                    bytes=part_bytes,
-                                )
+                            req = raw_funcs.upload.SaveFilePart(
+                                file_id=file_id,
+                                file_part=part_index,
+                                bytes=part_bytes,
                             )
+
+                        from aiogram.mtproto.connection.dc_manager import DCSessionPool
+
+                        if isinstance(self.client, DCSessionPool):
+                            await self.client.invoke(req, worker_index=worker_idx)
+                        else:
+                            await self.client.invoke(req)
                         break
                     except Exception:
                         if attempt == self.max_retries - 1:
@@ -155,11 +160,11 @@ class FileUploader:
                 queue.task_done()
 
         # Spawn persistent upload workers
-        worker_tasks = [asyncio.create_task(_worker()) for _ in range(self.workers)]
+        worker_tasks = [asyncio.create_task(_worker(i)) for i in range(self.workers)]
 
         try:
             # Stream chunks from disk/source into queue with bounded memory
-            for part_idx, part_data in _iter_file_chunks(source, chunk_size):
+            async for part_idx, part_data in _iter_file_chunks(source, chunk_size):
                 await queue.put((part_idx, part_data))
 
             # Wait for all chunks to be processed
