@@ -70,7 +70,7 @@ jobs:
             Possible categories are: `feature`, `bugfix`, `doc`, `removal` and `misc`.
 
       - name: Changelog found
-        if: "success()"
+        if: "success() && github.event.pull_request.number"
         continue-on-error: true
         uses: peter-evans/create-or-update-comment@v4
         with:
