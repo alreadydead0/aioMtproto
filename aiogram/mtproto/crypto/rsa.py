@@ -166,8 +166,8 @@ def rsa_encrypt(data: bytes, key: RSAKey) -> bytes:
     :param key: RSAKey instance with n and e.
     :return: 256-byte RSA ciphertext.
     """
-    sha1_hash = hashlib.sha1(data).digest()   # 20 bytes
-    data_with_hash = sha1_hash + data          # 20 + len(data) bytes
+    sha1_hash = hashlib.sha1(data).digest()  # 20 bytes
+    data_with_hash = sha1_hash + data  # 20 + len(data) bytes
     # Pad to exactly 255 bytes so the integer is < n
     pad_len = 255 - len(data_with_hash)
     if pad_len < 0:
@@ -178,7 +178,6 @@ def rsa_encrypt(data: bytes, key: RSAKey) -> bytes:
         raise ValueError(msg)
 
     padded = data_with_hash + os.urandom(pad_len)  # exactly 255 bytes
-    data_int = int.from_bytes(padded, "big")        # fits in < 2048 bits
+    data_int = int.from_bytes(padded, "big")  # fits in < 2048 bits
     enc_int = pow(data_int, key.e, key.n)
-    return enc_int.to_bytes(256, "big")             # 256-byte output
-
+    return enc_int.to_bytes(256, "big")  # 256-byte output

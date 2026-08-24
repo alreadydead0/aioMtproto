@@ -47,7 +47,9 @@ async def main():
 
         print("\n[3/3] Exporting Portable StringSession...")
         session_str = bot.export_session_string()
-        print(f"      -> Session String Preview: {session_str[:35]}... (Length: {len(session_str)})")
+        print(
+            f"      -> Session String Preview: {session_str[:35]}... (Length: {len(session_str)})"
+        )
 
         print("\n" + "=" * 60)
         print("RESULT: LIVE MTPROTO BOT VERIFICATION 100% SUCCESSFUL!")

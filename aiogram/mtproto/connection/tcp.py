@@ -64,6 +64,17 @@ class TCPConnection:
             self._connected = False
             raise
 
+        import contextlib
+        import socket
+
+        # Tune socket performance (TCP_NODELAY and expanded buffer sizes)
+        sock = self.writer.get_extra_info("socket") if self.writer else None
+        if sock is not None:
+            with contextlib.suppress(Exception):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
+
         # Send transport header if required
         if self.transport.HEADER:
             assert self.writer is not None

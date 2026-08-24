@@ -975,11 +975,7 @@ class InputPeerPhotoFileLocation(InputFileLocation):
 
     def write(self) -> bytes:
         flags = 1 if self.big else 0
-        return (
-            struct.pack("<II", self.ID, flags)
-            + self.peer.write()
-            + write_long(self.photo_id)
-        )
+        return struct.pack("<II", self.ID, flags) + self.peer.write() + write_long(self.photo_id)
 
     @classmethod
     def read(cls, b: BinaryIO) -> InputPeerPhotoFileLocation:
@@ -1360,6 +1356,3 @@ class InputMediaUploadedDocument(InputMedia):
             force_file=bool(flags & (1 << 4)),
             spoiler=bool(flags & (1 << 5)),
         )
-
-
-

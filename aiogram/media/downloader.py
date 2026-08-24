@@ -17,6 +17,8 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, BinaryIO
 
+import aiofiles
+
 from aiogram.errors.mtproto import (
     AuthKeyNotFound,
     AuthKeyUnregistered,
@@ -100,7 +102,7 @@ class FileDownloader:
                 target_dc_id = decoded.dc_id
             location = file_id_to_input_location(location)
 
-        dc_client = self.client
+        dc_client: Any = self.client
         if hasattr(self.client, "get_media_client"):
             res = self.client.get_media_client(target_dc_id)
             if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
@@ -146,20 +148,20 @@ class FileDownloader:
         chunks_map: dict[int, bytes] = {}
         downloaded_bytes = 0
         progress_lock = asyncio.Lock()
-        semaphore = asyncio.Semaphore(self.workers)
 
         current_location: TLObject = location
         refreshed_count = 0
         refresh_lock = asyncio.Lock()
 
-        file_handle: BinaryIO | None = None
+        async_file: Any = None
+        sync_file: BinaryIO | None = None
         if isinstance(destination, str):
             parent_dir = os.path.dirname(destination)
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-            file_handle = open(destination, "wb")  # noqa: SIM115
+            async_file = await aiofiles.open(destination, "wb")
         elif destination is not None:
-            file_handle = destination
+            sync_file = destination
 
         async def _handle_file_reference_expired(expired_loc: TLObject) -> TLObject:
             nonlocal current_location, refreshed_count
@@ -196,62 +198,97 @@ class FileDownloader:
                 logger.info("Media location successfully refreshed (count=%d)", refreshed_count)
                 return current_location
 
-        async def _fetch_chunk(offset: int) -> None:
-            nonlocal downloaded_bytes
-            async with semaphore:
-                chunk_client = active_client
-                chunk_data = b""
-                attempt = 0
-                while attempt < self.max_retries:
-                    loc = current_location
-                    try:
-                        result = await chunk_client.invoke(
-                            raw_funcs.upload.GetFile(
-                                location=loc,
-                                offset=offset,
-                                limit=self.chunk_size,
-                            )
-                        )
-                        chunk_data = _extract_bytes(result)
-                        break
-                    except FileReferenceExpired:
-                        if refresh_location is None:
-                            raise
-                        # Coordinate refresh across parallel workers
-                        await _handle_file_reference_expired(loc)
-                        continue
-                    except FileMigrate as e:
-                        target_dc = getattr(e, "new_dc", getattr(e, "dc_id", 2))
-                        chunk_client = await self.client.get_media_client(target_dc)
-                        attempt += 1
-                        continue
-                    except (AuthKeyUnregistered, AuthKeyNotFound):
-                        if hasattr(chunk_client, "dc_id"):
-                            chunk_client = await self.client.get_media_client(chunk_client.dc_id)
-                        attempt += 1
-                        continue
-                    except Exception:
-                        attempt += 1
-                        if attempt >= self.max_retries:
-                            raise
-                        await asyncio.sleep(min(0.5 * attempt, 3.0))
+        async def _resolve_media_client(target_dc: int, worker_id: int) -> Any:
+            if hasattr(self.client, "get_media_client"):
+                res = self.client.get_media_client(
+                    target_dc, worker_idx=worker_id, pool_size=self.workers
+                )
+                if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                    resolved = await res
+                    if resolved is not None:
+                        return resolved
+                elif res is not None:
+                    return res
+            return active_client
 
-                async with progress_lock:
-                    if file_handle:
-                        file_handle.seek(offset)
-                        file_handle.write(chunk_data)
-                    else:
-                        chunks_map[offset] = chunk_data
-                    downloaded_bytes += len(chunk_data)
-                    if progress:
-                        with contextlib.suppress(Exception):
-                            progress(downloaded_bytes, file_size)
+        offsets_queue: asyncio.Queue[int | None] = asyncio.Queue()
+        for off in offsets:
+            offsets_queue.put_nowait(off)
+
+        async def _worker(worker_id: int) -> None:
+            nonlocal downloaded_bytes
+            target_dc = getattr(active_client, "dc_id", 2)
+            chunk_client = await _resolve_media_client(target_dc, worker_id)
+
+            while True:
+                offset = await offsets_queue.get()
+                if offset is None:
+                    offsets_queue.task_done()
+                    break
+
+                try:
+                    chunk_data = b""
+                    attempt = 0
+                    while attempt < self.max_retries:
+                        loc = current_location
+                        try:
+                            result = await chunk_client.invoke(
+                                raw_funcs.upload.GetFile(
+                                    location=loc,
+                                    offset=offset,
+                                    limit=self.chunk_size,
+                                )
+                            )
+                            chunk_data = _extract_bytes(result)
+                            break
+                        except FileReferenceExpired:
+                            if refresh_location is None:
+                                raise
+                            # Coordinate refresh across parallel workers
+                            await _handle_file_reference_expired(loc)
+                            continue
+                        except FileMigrate as e:
+                            new_dc = getattr(e, "new_dc", getattr(e, "dc_id", 2))
+                            chunk_client = await _resolve_media_client(new_dc, worker_id)
+                            attempt += 1
+                            continue
+                        except (AuthKeyUnregistered, AuthKeyNotFound):
+                            cur_dc = getattr(chunk_client, "dc_id", target_dc)
+                            chunk_client = await _resolve_media_client(cur_dc, worker_id)
+                            attempt += 1
+                            continue
+                        except Exception:
+                            attempt += 1
+                            if attempt >= self.max_retries:
+                                raise
+                            await asyncio.sleep(min(0.5 * attempt, 3.0))
+
+                    async with progress_lock:
+                        if async_file is not None:
+                            await async_file.seek(offset)
+                            await async_file.write(chunk_data)
+                        elif sync_file is not None:
+                            sync_file.seek(offset)
+                            sync_file.write(chunk_data)
+                        else:
+                            chunks_map[offset] = chunk_data
+                        downloaded_bytes += len(chunk_data)
+                        if progress:
+                            with contextlib.suppress(Exception):
+                                progress(downloaded_bytes, file_size)
+                finally:
+                    offsets_queue.task_done()
+
+        worker_tasks = [asyncio.create_task(_worker(w_id)) for w_id in range(self.workers)]
 
         try:
-            await asyncio.gather(*(_fetch_chunk(off) for off in offsets))
+            await offsets_queue.join()
         finally:
-            if file_handle and isinstance(destination, str):
-                file_handle.close()
+            for _ in range(self.workers):
+                await offsets_queue.put(None)
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
+            if async_file is not None:
+                await async_file.close()
 
         if isinstance(destination, str):
             return destination
@@ -281,14 +318,15 @@ class FileDownloader:
         current_location: TLObject = location
         refreshed_count = 0
 
-        file_handle: BinaryIO | None = None
+        async_file: Any = None
+        sync_file: BinaryIO | None = None
         if isinstance(destination, str):
             parent_dir = os.path.dirname(destination)
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-            file_handle = open(destination, "wb")  # noqa: SIM115
+            async_file = await aiofiles.open(destination, "wb")
         elif destination is not None:
-            file_handle = destination
+            sync_file = destination
 
         async def _handle_file_reference_expired(expired_loc: TLObject) -> TLObject:
             nonlocal current_location, refreshed_count
@@ -360,8 +398,10 @@ class FileDownloader:
                 if not chunk_data:
                     break
 
-                if file_handle:
-                    file_handle.write(chunk_data)
+                if async_file is not None:
+                    await async_file.write(chunk_data)
+                elif sync_file is not None:
+                    sync_file.write(chunk_data)
                 else:
                     buffer.extend(chunk_data)
 
@@ -376,8 +416,8 @@ class FileDownloader:
                     # Last partial chunk → transfer complete
                     break
         finally:
-            if file_handle and isinstance(destination, str):
-                file_handle.close()
+            if async_file is not None:
+                await async_file.close()
 
         if isinstance(destination, str):
             return destination

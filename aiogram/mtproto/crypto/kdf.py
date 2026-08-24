@@ -45,7 +45,8 @@ def compute_msg_key(auth_key: bytes, plaintext: bytes, is_client: bool) -> bytes
         msg_key = substr(msg_key_large, 8, 16)
 
     :param auth_key: 256-byte AuthKey.
-    :param plaintext: Unencrypted payload (including salt, session_id, msg_id, seq_no, msg_len, inner_data, padding).
+    :param plaintext: Unencrypted payload (including salt, session_id,
+        msg_id, seq_no, msg_len, inner_data, padding).
     :param is_client: True if client is sending, False if server is sending.
     :return: 16-byte msg_key (middle 128 bits of SHA256).
     """

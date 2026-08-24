@@ -1,15 +1,19 @@
 """
-High-Speed Parallel MTProto File Uploader with chunk retries, bounded memory, and progress tracking.
+High-Speed Parallel MTProto File Uploader with chunk retries, bounded memory,
+and progress tracking.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 import os
 import random
 from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
+
+import aiofiles
 
 from aiogram.media.chunker import (
     BIG_FILE_THRESHOLD,
@@ -27,33 +31,34 @@ ProgressCallback = Callable[[int, int], None]
 MAX_PART_SIZE = 512 * 1024
 
 
-def _iter_file_chunks(
+async def _stream_file_chunks(
     source: str | bytes | BinaryIO,
     chunk_size: int,
-) -> Generator[tuple[int, bytes], None, None]:
+    queue: asyncio.Queue[tuple[int, bytes] | None],
+) -> None:
     """
-    Yield ``(part_index, chunk_bytes)`` without loading the entire file into RAM.
-    Supports file paths, raw bytes, and file-like objects.
+    Stream ``(part_index, chunk_bytes)`` into queue asynchronously without blocking the event loop.
+    Supports file paths (via aiofiles), raw bytes, and file-like objects.
     """
     if isinstance(source, str):
-        with open(source, "rb") as f:
+        async with aiofiles.open(source, "rb") as f:
             idx = 0
             while True:
-                chunk = f.read(chunk_size)
+                chunk = await f.read(chunk_size)
                 if not chunk:
                     break
-                yield idx, chunk
+                await queue.put((idx, chunk))
                 idx += 1
     elif isinstance(source, bytes):
         for idx, offset in enumerate(range(0, len(source), chunk_size)):
-            yield idx, source[offset : offset + chunk_size]
+            await queue.put((idx, source[offset : offset + chunk_size]))
     else:
         idx = 0
         while True:
             chunk = source.read(chunk_size)
             if not chunk:
                 break
-            yield idx, chunk
+            await queue.put((idx, chunk))
             idx += 1
 
 
@@ -110,8 +115,30 @@ class FileUploader:
         lock = asyncio.Lock()
         queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(maxsize=self.workers * 2)
 
-        async def _worker() -> None:
+        target_dc = getattr(self.client, "dc_id", 2)
+        if hasattr(self.client, "dc_manager") and getattr(self.client, "dc_manager", None):
+            target_dc = self.client.dc_manager.main_dc_id
+
+        async def _resolve_media_client(target_dc: int, worker_id: int) -> Any:
+            if hasattr(self.client, "get_media_client"):
+                try:
+                    res = self.client.get_media_client(
+                        target_dc, worker_idx=worker_id, pool_size=self.workers
+                    )
+                    if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                        resolved = await res
+                        if resolved is not None:
+                            return resolved
+                    elif res is not None:
+                        return res
+                except Exception:
+                    pass
+            return self.client
+
+        async def _worker(worker_id: int) -> None:
             nonlocal uploaded_bytes
+            upload_client = await _resolve_media_client(target_dc, worker_id)
+
             while True:
                 item = await queue.get()
                 if item is None:
@@ -119,48 +146,50 @@ class FileUploader:
                     break
 
                 part_index, part_bytes = item
-                for attempt in range(self.max_retries):
-                    try:
-                        if is_big:
-                            await self.client.invoke(
-                                raw_funcs.upload.SaveBigFilePart(
-                                    file_id=file_id,
-                                    file_part=part_index,
-                                    file_total_parts=total_parts,
-                                    bytes=part_bytes,
+                try:
+                    for attempt in range(self.max_retries):
+                        try:
+                            if is_big:
+                                await upload_client.invoke(
+                                    raw_funcs.upload.SaveBigFilePart(
+                                        file_id=file_id,
+                                        file_part=part_index,
+                                        file_total_parts=total_parts,
+                                        bytes=part_bytes,
+                                    )
                                 )
-                            )
-                        else:
-                            await self.client.invoke(
-                                raw_funcs.upload.SaveFilePart(
-                                    file_id=file_id,
-                                    file_part=part_index,
-                                    bytes=part_bytes,
+                            else:
+                                await upload_client.invoke(
+                                    raw_funcs.upload.SaveFilePart(
+                                        file_id=file_id,
+                                        file_part=part_index,
+                                        bytes=part_bytes,
+                                    )
                                 )
-                            )
-                        break
-                    except Exception:
-                        if attempt == self.max_retries - 1:
-                            queue.task_done()
-                            raise
-                        await asyncio.sleep(0.3 * (attempt + 1))
+                            break
+                        except Exception:
+                            if attempt == self.max_retries - 1:
+                                raise
+                            await asyncio.sleep(0.3 * (attempt + 1))
+                finally:
+                    queue.task_done()
 
                 async with lock:
                     uploaded_bytes += len(part_bytes)
                     if progress:
                         try:
-                            progress(uploaded_bytes, file_size)
+                            res = progress(uploaded_bytes, file_size)
+                            if inspect.isawaitable(res):
+                                await res
                         except Exception:
                             pass
-                queue.task_done()
 
         # Spawn persistent upload workers
-        worker_tasks = [asyncio.create_task(_worker()) for _ in range(self.workers)]
+        worker_tasks = [asyncio.create_task(_worker(w_id)) for w_id in range(self.workers)]
 
         try:
             # Stream chunks from disk/source into queue with bounded memory
-            for part_idx, part_data in _iter_file_chunks(source, chunk_size):
-                await queue.put((part_idx, part_data))
+            await _stream_file_chunks(source, chunk_size, queue)
 
             # Wait for all chunks to be processed
             await queue.join()

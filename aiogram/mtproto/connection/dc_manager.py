@@ -8,8 +8,10 @@ authorizations across Data Centers, session state transitions, and concurrency l
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import enum
 import logging
+import random
 import time
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -24,6 +26,7 @@ from aiogram.errors.mtproto import (
     UserMigrate,
 )
 from aiogram.mtproto.connection.dc import DataCenter, get_dc
+from aiogram.mtproto.connection.pool import DEFAULT_POOL_SIZE, DCSessionPool
 from aiogram.mtproto.connection.tcp import TCPConnection
 from aiogram.mtproto.connection.transport import BaseTransport, IntermediateTransport
 from aiogram.mtproto.crypto.auth_key import AuthKey
@@ -32,6 +35,7 @@ from aiogram.mtproto.protocol.rpc import RPCEngine
 from aiogram.raw import functions as raw_funcs
 from aiogram.raw import types as raw_types
 from aiogram.raw.core.primitives import TLRequest
+from aiogram.raw.core.tl_core_types import PingDelayDisconnect
 from aiogram.session.base import BaseMTProtoSession, SessionData
 
 logger = logging.getLogger("aiogram.mtproto.dc_manager")
@@ -84,6 +88,7 @@ class DCClientSession:
         self.last_used: float = time.monotonic()
         self.version: int = 1
         self._lock = asyncio.Lock()
+        self._keepalive_task: asyncio.Task[None] | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -100,6 +105,33 @@ class DCClientSession:
         if self.is_media:
             return self.auth_imported
         return self.auth_verified
+
+    def start_keepalive(self, interval: float = 30.0, disconnect_delay: int = 75) -> None:
+        """
+        Start periodic keepalive ping loop to prevent Telegram idle timeout (~90s).
+        """
+        if self._keepalive_task is None or self._keepalive_task.done():
+            self._keepalive_task = asyncio.create_task(
+                self._keepalive_loop(interval=interval, disconnect_delay=disconnect_delay)
+            )
+
+    async def _keepalive_loop(self, interval: float, disconnect_delay: int) -> None:
+        while self.is_connected and self.state == DCState.READY:
+            try:
+                await asyncio.sleep(interval)
+                if not self.is_connected or self.state != DCState.READY:
+                    break
+                ping_id = random.getrandbits(63)
+                await self.invoke(
+                    PingDelayDisconnect(ping_id=ping_id, disconnect_delay=disconnect_delay),
+                    timeout=10.0,
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("[DC %d] Keepalive ping failed: %s", self.dc_id, e)
+                if not self.is_connected:
+                    break
 
     async def connect(self) -> None:
         """
@@ -168,9 +200,14 @@ class DCClientSession:
 
     async def close(self) -> None:
         """
-        Cleanly stop RPC and close the TCP connection.
+        Cleanly stop RPC, cancel keepalive, and close the TCP connection.
         """
         self.state = DCState.CLOSED
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._keepalive_task
+            self._keepalive_task = None
         if self.rpc:
             try:
                 res = self.rpc.stop()
@@ -242,6 +279,7 @@ class DCManager:
         self.session_storage = session_storage
 
         self._sessions: dict[int, DCClientSession] = {}
+        self._media_pools: dict[int, DCSessionPool] = {}
         self._dc_locks: dict[int, asyncio.Lock] = {}
         self._update_callbacks: list[Callable[[Any], None]] = []
         self._is_closing = False
@@ -355,14 +393,13 @@ class DCManager:
                                 val_err,
                             )
                         except Exception as other_err:
-                            logger.debug(
-                                "[DC %d] Validation check response: %s", dc_id, other_err
-                            )
+                            logger.debug("[DC %d] Validation check response: %s", dc_id, other_err)
                             is_valid = True
 
                         if is_valid:
                             session.auth_verified = True
                             session.state = DCState.READY
+                            session.start_keepalive()
                             logger.info("[DC %d] state HANDSHAKEN -> AUTHORIZED -> READY", dc_id)
                             self._sessions[dc_id] = session
                             return session
@@ -456,6 +493,7 @@ class DCManager:
                         session.auth_verified = True
 
                     session.state = DCState.READY
+                    session.start_keepalive()
                     logger.info("[DC %d] state HANDSHAKEN -> AUTHORIZED -> READY", dc_id)
                     self._sessions[dc_id] = session
                     return session
@@ -511,6 +549,7 @@ class DCManager:
                 )
                 session.auth_imported = True
                 session.state = DCState.READY
+                session.start_keepalive()
                 logger.info("[DC %d] Authorization import successful -> READY", dc_id)
                 self._sessions[dc_id] = session
                 return session
@@ -535,19 +574,128 @@ class DCManager:
             return main_client
         return await self.get_dc_client(self.main_dc_id, is_media=False)
 
-    async def get_media_client(self, dc_id: int) -> DCClientSession:
+    async def _create_handshaken_media_session(self, dc_id: int) -> DCClientSession:
+        """
+        Build and connect a fresh session for target DC.
+        If main DC, shares the main AuthKey with a fresh session_id for zero-overhead pooling.
+        """
+        if dc_id == self.main_dc_id:
+            main_client = await self._get_main_client_unlocked()
+            if main_client.auth_key:
+                session = DCClientSession(
+                    dc_id=dc_id,
+                    is_media=False,
+                    test_mode=self.test_mode,
+                    transport=self.transport_factory(),
+                    api_id=self.api_id,
+                )
+                try:
+                    await session.connect()
+                    session.auth_key = main_client.auth_key
+                    session.server_salt = main_client.server_salt
+                    session.session_id = generate_session_id()
+                    session.init_rpc(None)
+                    session.auth_verified = True
+                    return session
+                except Exception:
+                    await session.close()
+                    raise
+
+        session = DCClientSession(
+            dc_id=dc_id,
+            is_media=True,
+            test_mode=self.test_mode,
+            transport=self.transport_factory(),
+            api_id=self.api_id,
+        )
+        try:
+            await session.connect()
+            auth_key, server_salt = await session.handshake()
+            session.auth_key = auth_key
+            session.server_salt = server_salt
+            session.init_rpc(None)
+            return session
+        except Exception:
+            await session.close()
+            raise
+
+    async def _import_media_auth(self, session: DCClientSession, dc_id: int) -> None:
+        """
+        Export authorization from main DC and import into target media DC session.
+        Must be serialized per pool to prevent auth token invalidation races.
+        """
+        if dc_id == self.main_dc_id:
+            session.auth_verified = True
+            session.state = DCState.READY
+            session.start_keepalive()
+            return
+
+        try:
+            main_client = await self._get_main_client_unlocked()
+            exported = await main_client.invoke(raw_funcs.auth.ExportAuthorization(dc_id=dc_id))
+            auth_id = getattr(exported, "id", None)
+            auth_bytes = getattr(exported, "bytes_data", getattr(exported, "bytes", None))
+            if auth_id is None or auth_bytes is None:
+                msg = f"Invalid ExportedAuthorization from main DC {self.main_dc_id} for target DC {dc_id}"
+                raise Unauthorized(401, msg)
+
+            await session.invoke(
+                raw_funcs.auth.ImportAuthorization(id=auth_id, bytes_data=auth_bytes)
+            )
+            session.auth_imported = True
+            session.state = DCState.READY
+            session.start_keepalive()
+        except Exception:
+            await session.close()
+            raise
+
+    async def _create_media_session(self, dc_id: int) -> DCClientSession:
+        """
+        Build and authorize a fresh isolated media session for the target DC.
+        """
+        session = await self._create_handshaken_media_session(dc_id)
+        await self._import_media_auth(session, dc_id)
+        return session
+
+    def get_media_pool(self, dc_id: int, pool_size: int = DEFAULT_POOL_SIZE) -> DCSessionPool:
+        """
+        Obtain the DCSessionPool for a specific Data Center.
+        """
+        if dc_id not in self._media_pools:
+            self._media_pools[dc_id] = DCSessionPool(
+                dc_id=dc_id,
+                dc_manager=self,
+                session_factory=lambda: self._create_media_session(dc_id),
+                pool_size=pool_size,
+            )
+        return self._media_pools[dc_id]
+
+    async def get_media_client(
+        self,
+        dc_id: int,
+        worker_idx: int | None = None,
+        pool_size: int = DEFAULT_POOL_SIZE,
+    ) -> DCClientSession:
         """
         Get or spawn an authorized MTProto client connected to a specific Data Center.
+        When worker_idx is provided, retrieves a dedicated session from the DCSessionPool.
         """
+        if worker_idx is not None:
+            pool = self.get_media_pool(dc_id, pool_size=pool_size)
+            return await pool.get_session_async(worker_idx)
         if dc_id == self.main_dc_id:
             return await self.get_dc_client(dc_id, is_media=False)
         return await self.get_dc_client(dc_id, is_media=True)
 
     async def invalidate_dc(self, dc_id: int) -> None:
         """
-        Invalidate, close, and purge cached client state for a given DC.
+        Invalidate, close, and purge cached client state and pools for a given DC.
         If it is the main DC, also atomically clear the persisted stale AuthKey.
         """
+        if dc_id in self._media_pools:
+            pool = self._media_pools.pop(dc_id)
+            await pool.close()
+
         dc_lock = self.get_dc_lock(dc_id)
         async with dc_lock:
             session = self._sessions.pop(dc_id, None)
@@ -639,7 +787,7 @@ class DCManager:
 
     async def close_all(self) -> None:
         """
-        Gracefully close all active DC sessions.
+        Gracefully close all active DC sessions and pools.
         """
         self._is_closing = True
         for dc_id, session in list(self._sessions.items()):
@@ -648,3 +796,10 @@ class DCManager:
             except Exception as e:
                 logger.debug("Error closing DC %d: %s", dc_id, e)
         self._sessions.clear()
+
+        for dc_id, pool in list(self._media_pools.items()):
+            try:
+                await pool.close()
+            except Exception as e:
+                logger.debug("Error closing media pool DC %d: %s", dc_id, e)
+        self._media_pools.clear()

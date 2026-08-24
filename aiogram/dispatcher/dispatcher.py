@@ -628,7 +628,7 @@ class Dispatcher(Router):
                 finally:
                     if close_bot_session:
                         for bot in bots:
-                            if getattr(bot, "mtproto", None) is not None:
+                            if bot.mtproto is not None:
                                 await bot.mtproto.disconnect()
                         await asyncio.gather(*(bot.session.close() for bot in bots))
                 self._stopped_signal.set()

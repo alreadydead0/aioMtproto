@@ -4,12 +4,50 @@ AES-IGE (Infinite Garble Extension) mode implementation for MTProto.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Callable
+from typing import Any
 
 # Check for cryptographic backends
+_HAS_TGCRYPTO = False
+_HAS_CRYPTG = False
+_HAS_PYCRYPTODOME_IGE = False
 _HAS_CRYPTOGRAPHY = False
 _HAS_PYCRYPTODOME = False
+
+_tgcrypto: Any = None
+try:
+    import tgcrypto as _tgcrypto  # type: ignore[import-untyped,no-redef]
+
+    _HAS_TGCRYPTO = hasattr(_tgcrypto, "ige256_encrypt") and hasattr(_tgcrypto, "ige256_decrypt")
+except ImportError:
+    pass
+
+_cryptg: Any = None
+if not _HAS_TGCRYPTO:
+    try:
+        import cryptg as _cryptg  # type: ignore[import-not-found,no-redef]
+
+        _HAS_CRYPTG = hasattr(_cryptg, "encrypt_ige") and hasattr(_cryptg, "decrypt_ige")
+    except ImportError:
+        pass
+
+_AES: Any = None
+try:
+    from Cryptodome.Cipher import AES as _AES
+
+    _HAS_PYCRYPTODOME = True
+except ImportError:
+    try:
+        from Crypto.Cipher import AES as _AES  # type: ignore[import-not-found,no-redef]
+
+        _HAS_PYCRYPTODOME = True
+    except ImportError:
+        pass
+
+if _HAS_PYCRYPTODOME and hasattr(_AES, "MODE_IGE"):
+    _HAS_PYCRYPTODOME_IGE = True
 
 try:
     from cryptography.hazmat.backends import default_backend
@@ -18,19 +56,6 @@ try:
     _HAS_CRYPTOGRAPHY = True
 except ImportError:
     pass
-
-if not _HAS_CRYPTOGRAPHY:
-    try:
-        from Cryptodome.Cipher import AES as _AES
-
-        _HAS_PYCRYPTODOME = True
-    except ImportError:
-        try:
-            from Crypto.Cipher import AES as _AES
-
-            _HAS_PYCRYPTODOME = True
-        except ImportError:
-            pass
 
 
 def _xor(a: bytes, b: bytes) -> bytes:
@@ -302,10 +327,10 @@ class PureAES:
         0xBB,
         0x16,
     )
-    INV_SBOX = [0] * 256
+    _inv_sbox_list = [0] * 256
     for i, v in enumerate(SBOX):
-        INV_SBOX[v] = i
-    INV_SBOX = tuple(INV_SBOX)
+        _inv_sbox_list[v] = i
+    INV_SBOX = tuple(_inv_sbox_list)
 
     RCON = (
         0x00,
@@ -513,6 +538,11 @@ def _get_cipher_ecb(key: bytes) -> tuple[Callable[[bytes], bytes], Callable[[byt
     return pure.encrypt_block, pure.decrypt_block
 
 
+# Threshold above which crypto is offloaded to a thread pool
+# to avoid blocking the event loop on large file chunks (e.g. 512 KiB).
+CRYPTO_THREAD_POOL_THRESHOLD = 64 * 1024
+
+
 def aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
     """
     Encrypt data using AES-256-IGE mode.
@@ -532,6 +562,20 @@ def aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         msg = f"IV length must be 32 bytes (got {len(iv)})"
         raise ValueError(msg)
 
+    # Fast Tier 1: tgcrypto (C-accelerated whole buffer)
+    if _HAS_TGCRYPTO and _tgcrypto is not None:
+        return bytes(_tgcrypto.ige256_encrypt(data, key, iv))
+
+    # Fast Tier 2: cryptg (C-accelerated whole buffer)
+    if _HAS_CRYPTG and _cryptg is not None:
+        return bytes(_cryptg.encrypt_ige(data, key, iv))
+
+    # Fast Tier 3: PyCryptodome / Cryptodome MODE_IGE (C-accelerated whole buffer)
+    if _HAS_PYCRYPTODOME_IGE and _AES is not None:
+        cipher = _AES.new(key, _AES.MODE_IGE, iv)
+        return bytes(cipher.encrypt(data))
+
+    # Fallback Tier: Block-by-block ECB (cryptography or PureAES)
     encrypt_block, _ = _get_cipher_ecb(key)
     iv1 = iv[:16]
     iv2 = iv[16:]
@@ -569,6 +613,20 @@ def aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         msg = f"IV length must be 32 bytes (got {len(iv)})"
         raise ValueError(msg)
 
+    # Fast Tier 1: tgcrypto (C-accelerated whole buffer)
+    if _HAS_TGCRYPTO and _tgcrypto is not None:
+        return bytes(_tgcrypto.ige256_decrypt(data, key, iv))
+
+    # Fast Tier 2: cryptg (C-accelerated whole buffer)
+    if _HAS_CRYPTG and _cryptg is not None:
+        return bytes(_cryptg.decrypt_ige(data, key, iv))
+
+    # Fast Tier 3: PyCryptodome / Cryptodome MODE_IGE (C-accelerated whole buffer)
+    if _HAS_PYCRYPTODOME_IGE and _AES is not None:
+        cipher = _AES.new(key, _AES.MODE_IGE, iv)
+        return bytes(cipher.decrypt(data))
+
+    # Fallback Tier: Block-by-block ECB (cryptography or PureAES)
     _, decrypt_block = _get_cipher_ecb(key)
     iv1 = iv[:16]
     iv2 = iv[16:]
@@ -585,3 +643,25 @@ def aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         iv2 = p
 
     return bytes(out)
+
+
+async def async_aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
+    """
+    Asynchronously encrypt data using AES-256-IGE mode.
+    Offloads large buffers (> 64 KB) to a thread pool executor to prevent blocking the event loop.
+    """
+    if len(data) > CRYPTO_THREAD_POOL_THRESHOLD:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, aes_ige_encrypt, data, key, iv)
+    return aes_ige_encrypt(data, key, iv)
+
+
+async def async_aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
+    """
+    Asynchronously decrypt data using AES-256-IGE mode.
+    Offloads large buffers (> 64 KB) to a thread pool executor to prevent blocking the event loop.
+    """
+    if len(data) > CRYPTO_THREAD_POOL_THRESHOLD:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, aes_ige_decrypt, data, key, iv)
+    return aes_ige_decrypt(data, key, iv)

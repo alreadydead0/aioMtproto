@@ -14,8 +14,6 @@ import re
 from collections.abc import AsyncGenerator, Callable
 from typing import Any, BinaryIO, TypeVar
 
-logger = logging.getLogger("aiogram.client.mtproto")
-
 from aiogram import types as tg_types
 from aiogram.enums import ChatType
 from aiogram.mtproto.auth.handshake import do_handshake
@@ -33,6 +31,7 @@ from aiogram.session.memory import MemorySession
 from aiogram.session.sqlite import SQLiteSession
 from aiogram.session.string import StringSession
 
+logger = logging.getLogger("aiogram.client.mtproto")
 T = TypeVar("T")
 
 
@@ -116,11 +115,25 @@ class MTProtoClient:
         main = self.dc_manager._sessions.get(self.dc_manager.main_dc_id)
         return main is not None and main.is_ready
 
-    async def get_media_client(self, dc_id: int) -> DCClientSession:
+    def get_media_pool(self, dc_id: int, pool_size: int = 4) -> Any:
+        """
+        Get or create a DCSessionPool for the target Data Center.
+        """
+        return self.dc_manager.get_media_pool(dc_id, pool_size=pool_size)
+
+    async def get_media_client(
+        self,
+        dc_id: int,
+        worker_idx: int | None = None,
+        pool_size: int = 4,
+    ) -> DCClientSession:
         """
         Get or spawn an MTProto client connected and authorized to a specific Data Center.
+        When worker_idx is provided, returns a dedicated session from the DCSessionPool.
         """
-        return await self.dc_manager.get_media_client(dc_id)
+        return await self.dc_manager.get_media_client(
+            dc_id, worker_idx=worker_idx, pool_size=pool_size
+        )
 
     async def connect(self) -> None:
         """
@@ -382,7 +395,7 @@ class MTProtoClient:
                 workers=workers,
             )
 
-        actual_name = file_name or getattr(input_file, "name", "file.bin")
+        actual_name = str(file_name or getattr(input_file, "name", "file.bin"))
         attributes: list[raw_types.TLObject] = [
             raw_types.DocumentAttributeFilename(file_name=actual_name)
         ]
@@ -441,7 +454,7 @@ class MTProtoClient:
                 workers=workers,
             )
 
-        actual_name = file_name or getattr(input_file, "name", "video.mp4")
+        actual_name = str(file_name or getattr(input_file, "name", "video.mp4"))
         attributes: list[raw_types.TLObject] = [
             raw_types.DocumentAttributeFilename(file_name=actual_name),
             raw_types.DocumentAttributeVideo(

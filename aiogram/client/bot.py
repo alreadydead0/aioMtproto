@@ -455,7 +455,7 @@ class Bot:
         destination: Any = None,
         progress: Any = None,
         workers: int = 8,
-    ) -> bytes | str:
+    ) -> bytes | str | BinaryIO:
         """
         Download media via high-speed MTProto parallel chunk engine with disk streaming using current session.
         """
@@ -592,12 +592,13 @@ class Bot:
         """
         if self.mtproto is not None:
             file_size = getattr(file, "file_size", None)
-            return await self.mtproto.download_file(
+            res = await self.mtproto.download_file(
                 location=file,
                 file_size=file_size,
                 destination=destination,
                 progress=getattr(self, "_default_download_progress", None),
             )
+            return cast(BinaryIO | None, res)
 
         if isinstance(file, str):
             file_id = file

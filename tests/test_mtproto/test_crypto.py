@@ -7,7 +7,13 @@ import os
 
 import pytest
 
-from aiogram.mtproto.crypto.aes_ige import PureAES, aes_ige_decrypt, aes_ige_encrypt
+from aiogram.mtproto.crypto.aes_ige import (
+    PureAES,
+    aes_ige_decrypt,
+    aes_ige_encrypt,
+    async_aes_ige_decrypt,
+    async_aes_ige_encrypt,
+)
 from aiogram.mtproto.crypto.auth_key import AuthKey
 from aiogram.mtproto.crypto.dh import (
     check_dh_g,
@@ -41,6 +47,46 @@ def test_aes_ige_roundtrip() -> None:
 
     decrypted = aes_ige_decrypt(ciphertext, key, iv)
     assert decrypted == plaintext
+
+
+@pytest.mark.asyncio
+async def test_async_aes_ige_roundtrip_large() -> None:
+    key = os.urandom(32)
+    iv = os.urandom(32)
+    # 128 KiB (> 64 KiB threshold to trigger thread-pool offloading)
+    plaintext = os.urandom(128 * 1024)
+
+    ciphertext = await async_aes_ige_encrypt(plaintext, key, iv)
+    assert len(ciphertext) == len(plaintext)
+    assert ciphertext != plaintext
+
+    decrypted = await async_aes_ige_decrypt(ciphertext, key, iv)
+    assert decrypted == plaintext
+
+
+def test_backend_status() -> None:
+    from aiogram.mtproto.crypto import aes_ige
+
+    print(f"\n[BACKEND STATUS] TGCRYPTO: {aes_ige._HAS_TGCRYPTO}")
+    print(f"[BACKEND STATUS] CRYPTG: {aes_ige._HAS_CRYPTG}")
+    print(f"[BACKEND STATUS] CRYPTOGRAPHY: {aes_ige._HAS_CRYPTOGRAPHY}")
+    print(f"[BACKEND STATUS] PYCRYPTODOME: {aes_ige._HAS_PYCRYPTODOME}")
+    assert aes_ige._HAS_TGCRYPTO is True
+
+
+def test_aes_ige_benchmark_5_1(capsys: pytest.CaptureFixture[str]) -> None:
+    import time
+
+    key, iv = os.urandom(32), os.urandom(32)
+    data = os.urandom(10 * 1024 * 1024)  # 10 MB
+
+    start = time.perf_counter()
+    for _ in range(10):
+        aes_ige_encrypt(data, key, iv)
+    elapsed = time.perf_counter() - start
+    speed = 100 / elapsed
+    print(f"\n[CRYPTO BENCHMARK] 100MB Encrypt Throughput: {speed:.1f} MB/s in {elapsed:.4f}s")
+    assert speed > 30.0
 
 
 def test_factorize_pq() -> None:

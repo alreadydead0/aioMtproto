@@ -561,6 +561,7 @@ async def test_a_stored_valid_auth_key_validation_succeeds() -> None:
     invoked_requests: list[Any] = []
 
     with patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True):
+
         def fake_init_rpc(self: DCClientSession, cb: Any = None) -> RPCEngine:
             self.rpc = MagicMock()
             self.rpc.stop = AsyncMock()
@@ -581,7 +582,9 @@ async def test_a_stored_valid_auth_key_validation_succeeds() -> None:
             # Validation query executed
             assert any(isinstance(r, raw_funcs.users.GetUsers) for r in invoked_requests)
             # Bot authorization was NOT unnecessarily executed
-            assert not any(isinstance(r, raw_funcs.auth.ImportBotAuthorization) for r in invoked_requests)
+            assert not any(
+                isinstance(r, raw_funcs.auth.ImportBotAuthorization) for r in invoked_requests
+            )
 
 
 @pytest.mark.asyncio
@@ -642,7 +645,9 @@ async def test_b_stored_stale_auth_key_invalidated_and_recovered() -> None:
             assert saved_data.user_id == 789
 
             # Verified that ImportBotAuthorization ran after stale key invalidation
-            assert any(isinstance(r, raw_funcs.auth.ImportBotAuthorization) for r in invoked_requests)
+            assert any(
+                isinstance(r, raw_funcs.auth.ImportBotAuthorization) for r in invoked_requests
+            )
 
 
 @pytest.mark.asyncio
@@ -701,6 +706,7 @@ async def test_c_stored_stale_auth_key_fresh_key_persisted() -> None:
     )
 
     with patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True):
+
         def fake_init_rpc_2(self: DCClientSession, cb: Any = None) -> RPCEngine:
             self.rpc = MagicMock()
             self.rpc.stop = AsyncMock()
@@ -741,7 +747,7 @@ async def test_d_stale_main_auth_key_media_dc4_rebuilds_and_exports() -> None:
         patch.object(DCClientSession, "handshake", new_callable=AsyncMock) as mock_hs,
     ):
         mock_hs.side_effect = [
-            (media_key, 400),       # DC 4 handshake
+            (media_key, 400),  # DC 4 handshake
             (fresh_main_key, 200),  # Fresh DC 2 handshake after stale invalidation
         ]
 
@@ -756,7 +762,9 @@ async def test_d_stale_main_auth_key_media_dc4_rebuilds_and_exports() -> None:
                     if isinstance(req, raw_funcs.auth.ImportBotAuthorization):
                         return raw_types.Authorization(user=raw_types.User(id=1, is_self=True))
                     if isinstance(req, raw_funcs.auth.ExportAuthorization):
-                        return raw_types.ExportedAuthorization(id=777, bytes_data=b"DC4_AUTH_TOKEN")
+                        return raw_types.ExportedAuthorization(
+                            id=777, bytes_data=b"DC4_AUTH_TOKEN"
+                        )
                 elif self.dc_id == 4:
                     if isinstance(req, raw_funcs.auth.ImportAuthorization):
                         return raw_types.Authorization(user=raw_types.User(id=1, is_self=True))
@@ -860,6 +868,7 @@ async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
     dc4_handshake_count = 0
 
     with patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True):
+
         async def mock_handshake(self: DCClientSession) -> tuple[AuthKey, int]:
             nonlocal main_handshake_count, dc4_handshake_count
             if self.dc_id == 2:
@@ -873,6 +882,7 @@ async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
             return create_fake_auth_key(), 100
 
         with patch.object(DCClientSession, "handshake", side_effect=mock_handshake, autospec=True):
+
             def fake_init_rpc(self: DCClientSession, cb: Any = None) -> RPCEngine:
                 self.rpc = MagicMock()
                 self.rpc.stop = AsyncMock()
@@ -893,7 +903,9 @@ async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
                 self.rpc.invoke = AsyncMock(side_effect=mock_invoke)
                 return self.rpc
 
-            with patch.object(DCClientSession, "init_rpc", side_effect=fake_init_rpc, autospec=True):
+            with patch.object(
+                DCClientSession, "init_rpc", side_effect=fake_init_rpc, autospec=True
+            ):
                 # 10 concurrent requests for DC 4
                 clients = await asyncio.gather(*(manager.get_media_client(4) for _ in range(10)))
 
@@ -905,4 +917,3 @@ async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
                 # Handshakes: exactly 1 for DC 2 (rebuild) and exactly 1 for DC 4
                 assert main_handshake_count == 1
                 assert dc4_handshake_count == 1
-

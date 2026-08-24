@@ -50,7 +50,9 @@ def test_chunker_sizes_and_partitioning() -> None:
 @pytest.mark.asyncio
 async def test_file_uploader_small_and_big() -> None:
     mock_client = MagicMock()
-    mock_client.invoke = AsyncMock(return_value=True)
+    mock_client.dc_id = 2
+    mock_client.invoke = AsyncMock(side_effect=lambda req: True)
+    mock_client.get_media_client = AsyncMock(side_effect=lambda *args, **kwargs: mock_client)
 
     uploader = FileUploader(client=mock_client, workers=4)
 
@@ -285,7 +287,9 @@ async def test_g_second_file_reference_expired_does_not_cause_infinite_loop() ->
         refresh_call_count += 1
         return InputDocumentFileLocation(id=1, access_hash=2, file_reference=b"ANOTHER_REF")
 
-    downloader = FileDownloader(client=mock_client, chunk_size=1024, max_file_reference_refreshes=1)
+    downloader = FileDownloader(
+        client=mock_client, chunk_size=1024, max_file_reference_refreshes=1
+    )
     loc = InputDocumentFileLocation(id=1, access_hash=2, file_reference=b"OLD")
 
     with pytest.raises(FileReferenceExpired):
@@ -353,7 +357,7 @@ async def test_j_file_migrate_still_works() -> None:
     main_client = MagicMock()
     main_client.dc_id = 2
 
-    async def get_media_client_mock(target_dc: int) -> Any:
+    async def get_media_client_mock(target_dc: int, *args: Any, **kwargs: Any) -> Any:
         if target_dc == 5:
             return mock_dc5
         return mock_dc4
@@ -421,4 +425,3 @@ async def test_l_normal_network_retry_remains_unchanged() -> None:
     result = await downloader.download(location=loc)
     assert result == b"SUCCESS_AFTER_NETWORK_RETRY"
     assert attempt == 3
-

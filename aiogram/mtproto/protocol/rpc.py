@@ -129,7 +129,7 @@ class RPCEngine:
         future: asyncio.Future[Any] = loop.create_future()
         self._pending_requests[msg_id] = (future, query)
 
-        encrypted = MessageCodec.pack_encrypted(
+        encrypted = await MessageCodec.async_pack_encrypted(
             auth_key=self.auth_key,
             server_salt=self.server_salt,
             session_id=self.session_id,
@@ -159,7 +159,7 @@ class RPCEngine:
             seq_no = self._seq_no * 2 + 1
             self._seq_no += 1
             self._pending_requests[msg_id] = (fut, query)
-            encrypted = MessageCodec.pack_encrypted(
+            encrypted = await MessageCodec.async_pack_encrypted(
                 auth_key=self.auth_key,
                 server_salt=self.server_salt,
                 session_id=self.session_id,
@@ -185,7 +185,7 @@ class RPCEngine:
             msg_id = self.id_gen.generate_msg_id()
             # Non-content message: seq_no = self._seq_no * 2
             seq_no = self._seq_no * 2
-            encrypted = MessageCodec.pack_encrypted(
+            encrypted = await MessageCodec.async_pack_encrypted(
                 auth_key=self.auth_key,
                 server_salt=self.server_salt,
                 session_id=self.session_id,
@@ -219,7 +219,7 @@ class RPCEngine:
                             fut.set_exception(exc)
                     break
 
-                salt, s_session_id, messages = MessageCodec.unpack_encrypted(
+                salt, s_session_id, messages = await MessageCodec.async_unpack_encrypted(
                     auth_key=self.auth_key,
                     session_id=self.session_id,
                     data=data,

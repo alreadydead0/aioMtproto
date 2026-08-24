@@ -58,10 +58,10 @@ def _check_transport_error(data: bytes, step: str) -> None:
     """
     if len(data) == 4:
         import struct
+
         err = struct.unpack("<i", data)[0]
         raise ConnectionError(
-            f"MTProto transport error during handshake ({step}): {err} "
-            f"(hex: {data.hex()})"
+            f"MTProto transport error during handshake ({step}): {err} (hex: {data.hex()})"
         )
 
 

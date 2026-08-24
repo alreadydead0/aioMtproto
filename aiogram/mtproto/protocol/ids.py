@@ -48,4 +48,4 @@ def generate_session_id() -> int:
     """
     Generate random 64-bit signed integer session_id.
     """
-    return struct.unpack("<q", os.urandom(8))[0]
+    return int(struct.unpack("<q", os.urandom(8))[0])

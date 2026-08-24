@@ -98,4 +98,3 @@ def test_upload_file_deserialization_with_storage_file_type() -> None:
     assert isinstance(read_obj.type, StorageFileUnknown)
     assert read_obj.mtime == 1700000000
     assert read_obj.bytes == b"FILE_CHUNK"
-
