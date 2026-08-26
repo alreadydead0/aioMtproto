@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -24,6 +25,7 @@ from aiogram.errors.mtproto import (
     AuthKeyUnregistered,
     FileMigrate,
     FileReferenceExpired,
+    FloodWait,
 )
 from aiogram.raw import functions as raw_funcs
 from aiogram.raw.core.primitives import TLObject
@@ -62,7 +64,7 @@ class FileDownloader:
         self,
         client: MTProtoClient,
         chunk_size: int = MAX_CHUNK_SIZE,
-        workers: int = 4,
+        workers: int = 8,
         max_retries: int = 5,
         max_file_reference_refreshes: int = 1,
     ) -> None:
@@ -142,24 +144,54 @@ class FileDownloader:
         dc_client: Any = None,
         refresh_location: RefreshCallback | None = None,
     ) -> bytes | str | BinaryIO:
+        import inspect
+        import time
+
         active_client = dc_client or self.client
         offsets = list(range(0, file_size, self.chunk_size))
 
         chunks_map: dict[int, bytes] = {}
         downloaded_bytes = 0
-        progress_lock = asyncio.Lock()
+        file_lock = asyncio.Lock()
+        state_lock = asyncio.Lock()
 
         current_location: TLObject = location
         refreshed_count = 0
         refresh_lock = asyncio.Lock()
 
-        async_file: Any = None
+        last_progress_time = 0.0
+        progress_task: asyncio.Task[Any] | None = None
+
+        def _dispatch_progress(curr: int, total: int) -> None:
+            nonlocal last_progress_time, progress_task
+            if not progress:
+                return
+            now = time.monotonic()
+            if now - last_progress_time >= 1.0 or curr >= total:
+                last_progress_time = now
+                if progress_task is None or progress_task.done():
+
+                    async def _run_cb() -> None:
+                        try:
+                            res = progress(curr, total)
+                            if inspect.isawaitable(res):
+                                await res
+                        except Exception:
+                            pass
+
+                    progress_task = asyncio.create_task(_run_cb())
+
         sync_file: BinaryIO | None = None
+        owns_file = False
         if isinstance(destination, str):
             parent_dir = os.path.dirname(destination)
+            base_name = os.path.basename(destination)
+            base_name = re.sub(r'[\r\n\t\x00-\x1f*?:"<>|]', " ", base_name).strip()
+            destination = os.path.join(parent_dir, base_name) if parent_dir else base_name
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-            async_file = await aiofiles.open(destination, "wb")
+            sync_file = open(destination, "wb")
+            owns_file = True
         elif destination is not None:
             sync_file = destination
 
@@ -215,6 +247,9 @@ class FileDownloader:
         for off in offsets:
             offsets_queue.put_nowait(off)
 
+        dc_flood_until: dict[int, float] = {}
+        dc_flood_lock = asyncio.Lock()
+
         async def _worker(worker_id: int) -> None:
             nonlocal downloaded_bytes
             target_dc = getattr(active_client, "dc_id", 2)
@@ -231,6 +266,15 @@ class FileDownloader:
                     attempt = 0
                     while attempt < self.max_retries:
                         loc = current_location
+                        cur_dc = getattr(chunk_client, "dc_id", target_dc)
+
+                        # Check if this DC is currently cooling down from a FloodWait
+                        now = time.monotonic()
+                        if cur_dc in dc_flood_until and now < dc_flood_until[cur_dc]:
+                            pause = dc_flood_until[cur_dc] - now
+                            if pause > 0:
+                                await asyncio.sleep(pause)
+
                         try:
                             result = await chunk_client.invoke(
                                 raw_funcs.upload.GetFile(
@@ -257,25 +301,40 @@ class FileDownloader:
                             chunk_client = await _resolve_media_client(cur_dc, worker_id)
                             attempt += 1
                             continue
-                        except Exception:
+                        except FloodWait as e:
+                            wait_time = float(max(e.value, 1)) + 0.2
+                            async with dc_flood_lock:
+                                dc_flood_until[cur_dc] = max(
+                                    dc_flood_until.get(cur_dc, 0.0), time.monotonic() + wait_time
+                                )
+                            logger.debug(
+                                "FloodWait received on DC %d. Coordinated pause for %.1fs...",
+                                cur_dc,
+                                wait_time,
+                            )
+                            await asyncio.sleep(wait_time)
+                            continue
+                        except Exception as e:
                             attempt += 1
                             if attempt >= self.max_retries:
+                                logger.error("Chunk offset %d failed after %d attempts: %s", offset, attempt, e)
                                 raise
-                            await asyncio.sleep(min(0.5 * attempt, 3.0))
+                            await asyncio.sleep(0.05)
 
-                    async with progress_lock:
-                        if async_file is not None:
-                            await async_file.seek(offset)
-                            await async_file.write(chunk_data)
-                        elif sync_file is not None:
+                    if sync_file is not None:
+                        async with file_lock:
                             sync_file.seek(offset)
                             sync_file.write(chunk_data)
-                        else:
+                    else:
+                        async with file_lock:
                             chunks_map[offset] = chunk_data
+
+                    async with state_lock:
                         downloaded_bytes += len(chunk_data)
-                        if progress:
-                            with contextlib.suppress(Exception):
-                                progress(downloaded_bytes, file_size)
+                        _dispatch_progress(downloaded_bytes, file_size)
+
+                    # Smooth micro-pacing per worker
+                    await asyncio.sleep(0.02)
                 finally:
                     offsets_queue.task_done()
 
@@ -287,8 +346,11 @@ class FileDownloader:
             for _ in range(self.workers):
                 await offsets_queue.put(None)
             await asyncio.gather(*worker_tasks, return_exceptions=True)
-            if async_file is not None:
-                await async_file.close()
+            if sync_file is not None and owns_file:
+                sync_file.close()
+            if progress_task and not progress_task.done():
+                with contextlib.suppress(Exception):
+                    await progress_task
 
         if isinstance(destination, str):
             return destination
@@ -318,13 +380,17 @@ class FileDownloader:
         current_location: TLObject = location
         refreshed_count = 0
 
-        async_file: Any = None
         sync_file: BinaryIO | None = None
+        owns_file = False
         if isinstance(destination, str):
             parent_dir = os.path.dirname(destination)
+            base_name = os.path.basename(destination)
+            base_name = re.sub(r'[\r\n\t\x00-\x1f*?:"<>|]', " ", base_name).strip()
+            destination = os.path.join(parent_dir, base_name) if parent_dir else base_name
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-            async_file = await aiofiles.open(destination, "wb")
+            sync_file = open(destination, "wb")
+            owns_file = True
         elif destination is not None:
             sync_file = destination
 
@@ -389,18 +455,25 @@ class FileDownloader:
                             active_client = await self.client.get_media_client(active_client.dc_id)
                         attempt += 1
                         continue
+                    except FloodWait as e:
+                        wait_time = float(max(e.value, 1)) + 0.2
+                        logger.debug(
+                            "FloodWait received for chunk offset %d. Waiting %.1f seconds...",
+                            offset,
+                            wait_time,
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
                     except Exception:
                         attempt += 1
                         if attempt >= self.max_retries:
                             raise
-                        await asyncio.sleep(min(0.5 * attempt, 3.0))
+                        await asyncio.sleep(0.05)
 
                 if not chunk_data:
                     break
 
-                if async_file is not None:
-                    await async_file.write(chunk_data)
-                elif sync_file is not None:
+                if sync_file is not None:
                     sync_file.write(chunk_data)
                 else:
                     buffer.extend(chunk_data)
@@ -416,8 +489,8 @@ class FileDownloader:
                     # Last partial chunk → transfer complete
                     break
         finally:
-            if async_file is not None:
-                await async_file.close()
+            if sync_file is not None and owns_file:
+                sync_file.close()
 
         if isinstance(destination, str):
             return destination

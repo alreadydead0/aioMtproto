@@ -66,6 +66,7 @@ class MTProtoClient:
         test_mode: bool = False,
         transport: BaseTransport | None = None,
         bot_token: str | None = None,
+        max_concurrent_transmissions: int = 10,
     ) -> None:
         self.api_id = api_id
         self.api_hash = api_hash
@@ -73,6 +74,8 @@ class MTProtoClient:
         self.test_mode = test_mode
         self.bot_token = bot_token
         self.transport = transport or IntermediateTransport()
+        self.max_concurrent_transmissions = max(1, max_concurrent_transmissions)
+        self._transmission_semaphore = asyncio.Semaphore(self.max_concurrent_transmissions)
 
         if isinstance(session, str):
             if session == ":memory:":
@@ -135,6 +138,26 @@ class MTProtoClient:
             dc_id, worker_idx=worker_idx, pool_size=pool_size
         )
 
+    @property
+    def is_premium(self) -> bool:
+        """
+        Check if the authenticated user has Telegram Premium.
+        """
+        if self.me is not None:
+            return bool(getattr(self.me, "is_premium", False))
+        return False
+
+    @property
+    def max_file_size(self) -> int:
+        """
+        Maximum supported upload/download file size:
+        - 4 GB (4000 MB) for Telegram Premium users.
+        - 2 GB (2000 MB) for standard non-premium users and bot accounts.
+        """
+        if self.is_premium:
+            return 4000 * 1024 * 1024  # 4 GB
+        return 2000 * 1024 * 1024  # 2 GB
+
     async def connect(self) -> None:
         """
         Connect to Telegram MTProto, load/generate AuthKey, and start RPC engine.
@@ -150,6 +173,34 @@ class MTProtoClient:
                 await self.sign_in_bot()
             except Exception as e:
                 logger.debug("Auto sign_in_bot in connect: %s", e)
+        elif self.session_data and getattr(self.session_data, "user_id", None):
+            try:
+                await self.get_me()
+                if self.is_premium:
+                    logger.info(
+                        "🌟 [DC %d] Authenticated as Telegram Premium User (4GB Uploads Enabled)",
+                        self.dc_id,
+                    )
+                else:
+                    logger.info(
+                        "👤 [DC %d] Authenticated as Standard User (2GB Uploads Enabled)",
+                        self.dc_id,
+                    )
+            except Exception as e:
+                logger.debug("Auto get_me in connect: %s", e)
+
+    async def warmup(self, media_dcs: list[int] | None = None, pool_size: int = 8) -> None:
+        """
+        Pre-connect main DC and pre-warm media DC session pools on bot startup/deploy.
+        Eliminates startup lag, making initial media transfers 100% instantaneous.
+        """
+        await self.connect()
+        target_dcs = media_dcs or list({self.dc_manager.main_dc_id, 4, 2, 5})
+        tasks = []
+        for dc_id in target_dcs:
+            tasks.append(self.get_media_client(dc_id, worker_idx=0, pool_size=pool_size))
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("⚡ MTProto DC Pre-Warmup complete for DCs %s (pool_size=%d)", target_dcs, pool_size)
 
     def _on_raw_update(self, raw_update_obj: Any) -> None:
         """
@@ -218,6 +269,7 @@ class MTProtoClient:
             last_name=raw_user.last_name,
             username=raw_user.username,
             language_code=raw_user.lang_code,
+            is_premium=getattr(raw_user, "premium", False),
         )
         if self.session_data:
             self.session_data.user_id = self.me.id
@@ -258,6 +310,7 @@ class MTProtoClient:
             last_name=raw_user.last_name,
             username=raw_user.username,
             language_code=raw_user.lang_code,
+            is_premium=getattr(raw_user, "premium", False),
         )
         if self.session_data:
             self.session_data.user_id = self.me.id
@@ -286,6 +339,7 @@ class MTProtoClient:
                 last_name=raw_user.last_name,
                 username=raw_user.username,
                 language_code=raw_user.lang_code,
+                is_premium=getattr(raw_user, "premium", False),
             )
             return self.me
 
@@ -368,7 +422,8 @@ class MTProtoClient:
         from aiogram.media.uploader import FileUploader
 
         uploader = FileUploader(self, workers=workers)
-        return await uploader.upload(source=source, file_name=file_name, progress=progress)
+        async with self._transmission_semaphore:
+            return await uploader.upload(source=source, file_name=file_name, progress=progress)
 
     async def send_document(
         self,
@@ -376,6 +431,7 @@ class MTProtoClient:
         document: Any,
         file_name: str | None = None,
         caption: str = "",
+        parse_mode: str | None = None,
         mime_type: str = "application/octet-stream",
         reply_to_message_id: int | None = None,
         progress: Callable[[int, int], None] | None = None,
@@ -433,6 +489,7 @@ class MTProtoClient:
         video: Any,
         file_name: str | None = None,
         caption: str = "",
+        parse_mode: str | None = None,
         duration: float = 0.0,
         width: int = 0,
         height: int = 0,
@@ -507,13 +564,14 @@ class MTProtoClient:
         from aiogram.media.downloader import FileDownloader
 
         downloader = FileDownloader(self, workers=workers)
-        return await downloader.download(
-            location=location,
-            file_size=file_size,
-            destination=destination,
-            progress=progress,
-            refresh_location=refresh_location,
-        )
+        async with self._transmission_semaphore:
+            return await downloader.download(
+                location=location,
+                file_size=file_size,
+                destination=destination,
+                progress=progress,
+                refresh_location=refresh_location,
+            )
 
     async def export_session_string(self) -> str:
         """

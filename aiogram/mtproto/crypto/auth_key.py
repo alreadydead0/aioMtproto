@@ -32,4 +32,4 @@ class AuthKey:
         return hashlib.sha1(new_nonce + bytes([number]) + self.aux_hash).digest()[-16:]
 
     def __repr__(self) -> str:
-        return f"<AuthKey key_id={self.key_id:#018x}>"
+        return "<AuthKey>"

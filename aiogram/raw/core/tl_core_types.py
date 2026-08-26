@@ -138,6 +138,32 @@ class BadMsgNotification(TLObject):
         )
 
 
+class NewSessionCreated(TLObject):
+    ID = 0x9EC20908
+    QUALNAME = "types.NewSessionCreated"
+
+    def __init__(self, first_msg_id: int, unique_id: int, server_salt: int) -> None:
+        self.first_msg_id = first_msg_id
+        self.unique_id = unique_id
+        self.server_salt = server_salt
+
+    def write(self) -> bytes:
+        return (
+            struct.pack("<I", self.ID)
+            + write_long(self.first_msg_id)
+            + write_long(self.unique_id)
+            + write_long(self.server_salt)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> NewSessionCreated:
+        return NewSessionCreated(
+            first_msg_id=read_long(b),
+            unique_id=read_long(b),
+            server_salt=read_long(b),
+        )
+
+
 class Ping(TLRequest[int]):
     ID = 0x7ABE77EC
     QUALNAME = "functions.Ping"
@@ -149,9 +175,15 @@ class Ping(TLRequest[int]):
         return struct.pack("<I", self.ID) + write_long(self.ping_id)
 
     def read_result(self, b: BinaryIO) -> int:
-        read_uint(b)  # pong constructor
-        read_long(b)  # ping_id
-        return read_long(b)  # pong_id
+        pos = b.tell()
+        try:
+            c_id = read_uint(b)
+            if c_id != Pong.ID:
+                b.seek(pos)
+        except Exception:
+            b.seek(pos)
+        read_long(b)  # msg_id
+        return read_long(b)  # ping_id
 
 
 class Pong(TLObject):
@@ -186,9 +218,15 @@ class PingDelayDisconnect(TLRequest[int]):
         )
 
     def read_result(self, b: BinaryIO) -> int:
-        read_uint(b)
-        read_long(b)
-        return read_long(b)
+        pos = b.tell()
+        try:
+            c_id = read_uint(b)
+            if c_id != Pong.ID:
+                b.seek(pos)
+        except Exception:
+            b.seek(pos)
+        read_long(b)  # msg_id
+        return read_long(b)  # ping_id
 
 
 class InvokeWithLayer(TLRequest[Any]):

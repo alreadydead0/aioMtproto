@@ -1,0 +1,24 @@
+[package]
+name = "hypercrypto"
+version = "0.1.1"
+edition = "2021"
+authors = ["alreadydead0"]
+description = "Ultra high-performance Rust cryptographic extensions for MTProto 2.0 & Telegram clients"
+license = "MIT"
+readme = "README.md"
+
+[lib]
+name = "hypercrypto"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+aes = "0.8"
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

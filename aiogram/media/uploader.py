@@ -6,6 +6,7 @@ and progress tracking.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import math
 import os
@@ -38,28 +39,31 @@ async def _stream_file_chunks(
 ) -> None:
     """
     Stream ``(part_index, chunk_bytes)`` into queue asynchronously without blocking the event loop.
-    Supports file paths (via aiofiles), raw bytes, and file-like objects.
+    Supports file paths, raw bytes, and file-like objects with safe task cancellation handling.
     """
-    if isinstance(source, str):
-        async with aiofiles.open(source, "rb") as f:
+    try:
+        if isinstance(source, str):
+            with open(source, "rb") as f:
+                idx = 0
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    await queue.put((idx, chunk))
+                    idx += 1
+        elif isinstance(source, bytes):
+            for idx, offset in enumerate(range(0, len(source), chunk_size)):
+                await queue.put((idx, source[offset : offset + chunk_size]))
+        else:
             idx = 0
             while True:
-                chunk = await f.read(chunk_size)
+                chunk = source.read(chunk_size)
                 if not chunk:
                     break
                 await queue.put((idx, chunk))
                 idx += 1
-    elif isinstance(source, bytes):
-        for idx, offset in enumerate(range(0, len(source), chunk_size)):
-            await queue.put((idx, source[offset : offset + chunk_size]))
-    else:
-        idx = 0
-        while True:
-            chunk = source.read(chunk_size)
-            if not chunk:
-                break
-            await queue.put((idx, chunk))
-            idx += 1
+    except (asyncio.CancelledError, GeneratorExit):
+        return
 
 
 class FileUploader:
@@ -107,23 +111,68 @@ class FileUploader:
             if file_name is None:
                 file_name = getattr(source, "name", "file.bin")
 
+        max_allowed = getattr(self.client, "max_file_size", 2000 * 1024 * 1024)
+        if not isinstance(max_allowed, int):
+            max_allowed = 2000 * 1024 * 1024
+
+        if file_size > max_allowed:
+            is_prem = getattr(self.client, "is_premium", False)
+            account_desc = "Telegram Premium User session" if not is_prem else "Telegram's 4GB ceiling"
+            msg = (
+                f"File size {file_size / (1024 * 1024):.2f}MB exceeds maximum permitted limit "
+                f"({max_allowed / (1024 * 1024):.0f}MB). Uploading files >2GB requires a {account_desc}."
+            )
+            raise ValueError(msg)
+
         chunk_size = min(get_chunk_size(file_size), MAX_PART_SIZE)
         total_parts = max(1, math.ceil(file_size / chunk_size))
         is_big = file_size > BIG_FILE_THRESHOLD
+
+        import time
 
         uploaded_bytes = 0
         lock = asyncio.Lock()
         queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(maxsize=self.workers * 2)
 
+        # Determine correct home Data Center for upload
         target_dc = getattr(self.client, "dc_id", 2)
         if hasattr(self.client, "dc_manager") and getattr(self.client, "dc_manager", None):
             target_dc = self.client.dc_manager.main_dc_id
+        elif hasattr(self.client, "session_storage") and self.client.session_storage:
+            load_fn = getattr(self.client.session_storage, "load", None)
+            if callable(load_fn):
+                res = load_fn()
+                session_data = await res if inspect.isawaitable(res) else res
+                if session_data and getattr(session_data, "dc_id", None):
+                    target_dc = session_data.dc_id
 
-        async def _resolve_media_client(target_dc: int, worker_id: int) -> Any:
+        last_progress_time = 0.0
+        progress_task: asyncio.Task[Any] | None = None
+
+        def _dispatch_progress(curr: int, total: int) -> None:
+            nonlocal last_progress_time, progress_task
+            if not progress:
+                return
+            now = time.monotonic()
+            if now - last_progress_time >= 1.0 or curr >= total:
+                last_progress_time = now
+                if progress_task is None or progress_task.done():
+
+                    async def _run_cb() -> None:
+                        try:
+                            res = progress(curr, total)
+                            if inspect.isawaitable(res):
+                                await res
+                        except Exception:
+                            pass
+
+                    progress_task = asyncio.create_task(_run_cb())
+
+        async def _resolve_media_client(dc: int, worker_id: int) -> Any:
             if hasattr(self.client, "get_media_client"):
                 try:
                     res = self.client.get_media_client(
-                        target_dc, worker_idx=worker_id, pool_size=self.workers
+                        dc, worker_idx=worker_id, pool_size=self.workers
                     )
                     if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
                         resolved = await res
@@ -136,7 +185,7 @@ class FileUploader:
             return self.client
 
         async def _worker(worker_id: int) -> None:
-            nonlocal uploaded_bytes
+            nonlocal uploaded_bytes, target_dc
             upload_client = await _resolve_media_client(target_dc, worker_id)
 
             while True:
@@ -167,7 +216,20 @@ class FileUploader:
                                     )
                                 )
                             break
-                        except Exception:
+                        except Exception as exc:
+                            # Handle FloodWait automatically
+                            from aiogram.errors.mtproto import FileMigrate, FloodWait, UserMigrate
+
+                            if isinstance(exc, FloodWait):
+                                await asyncio.sleep(exc.value + 0.2)
+                                continue
+
+                            # Handle DC migration if returned during upload
+                            if isinstance(exc, (UserMigrate, FileMigrate)):
+                                new_dc = getattr(exc, "new_dc", getattr(exc, "dc_id", target_dc))
+                                target_dc = new_dc
+                                upload_client = await _resolve_media_client(target_dc, worker_id)
+                                continue
                             if attempt == self.max_retries - 1:
                                 raise
                             await asyncio.sleep(0.3 * (attempt + 1))
@@ -176,28 +238,29 @@ class FileUploader:
 
                 async with lock:
                     uploaded_bytes += len(part_bytes)
-                    if progress:
-                        try:
-                            res = progress(uploaded_bytes, file_size)
-                            if inspect.isawaitable(res):
-                                await res
-                        except Exception:
-                            pass
+                    _dispatch_progress(uploaded_bytes, file_size)
 
         # Spawn persistent upload workers
         worker_tasks = [asyncio.create_task(_worker(w_id)) for w_id in range(self.workers)]
+        producer_task = asyncio.create_task(_stream_file_chunks(source, chunk_size, queue))
 
         try:
-            # Stream chunks from disk/source into queue with bounded memory
-            await _stream_file_chunks(source, chunk_size, queue)
-
-            # Wait for all chunks to be processed
+            # Wait for producer to finish feeding chunks and queue to be completely processed
+            await producer_task
             await queue.join()
+        except BaseException:
+            producer_task.cancel()
+            for t in worker_tasks:
+                t.cancel()
+            raise
         finally:
             # Signal workers to exit
             for _ in range(self.workers):
                 await queue.put(None)
             await asyncio.gather(*worker_tasks, return_exceptions=True)
+            if progress_task and not progress_task.done():
+                with contextlib.suppress(Exception):
+                    await progress_task
 
         if is_big:
             return raw_types.InputFileBig(

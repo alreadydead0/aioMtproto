@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import pathlib
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import TracebackType
 from typing import (
@@ -11,8 +11,6 @@ from typing import (
     TypeVar,
     cast,
 )
-
-import aiofiles
 
 from aiogram.utils.token import extract_bot_id, validate_token
 
@@ -293,6 +291,7 @@ class Bot:
         api_hash: str | None = None,
         mtproto_session: Any = "aiogram.session",
         test_mode: bool = False,
+        max_concurrent_transmissions: int = 10,
         **kwargs: Any,
     ) -> None:
         """
@@ -307,6 +306,7 @@ class Bot:
         :param api_hash: Telegram MTProto API Hash.
         :param mtproto_session: Session name or session instance for MTProto persistence.
         :param test_mode: Connect to Telegram Test Data Centers.
+        :param max_concurrent_transmissions: Maximum number of concurrent file downloads/uploads across tasks.
         :raise TokenValidationError: When token has invalid format this exception will be raised
         """
 
@@ -334,6 +334,7 @@ class Bot:
                 session=mtproto_session,
                 test_mode=test_mode,
                 bot_token=token,
+                max_concurrent_transmissions=max_concurrent_transmissions,
             )
         else:
             self.mtproto = None
@@ -494,130 +495,52 @@ class Bot:
             self._me = await self.get_me()
         return self._me
 
-    @classmethod
-    async def __download_file_binary_io(
-        cls, destination: BinaryIO, seek: bool, stream: AsyncGenerator[bytes, None]
-    ) -> BinaryIO:
-        async for chunk in stream:
-            destination.write(chunk)
-            destination.flush()
-        if seek is True:
-            destination.seek(0)
-        return destination
-
-    @classmethod
-    async def __download_file(
-        cls, destination: str | pathlib.Path, stream: AsyncGenerator[bytes, None]
-    ) -> None:
-        async with aiofiles.open(destination, "wb") as f:
-            async for chunk in stream:
-                await f.write(chunk)
-
-    @classmethod
-    async def __aiofiles_reader(
-        cls, file: str | pathlib.Path, chunk_size: int = 65536
-    ) -> AsyncGenerator[bytes, None]:
-        async with aiofiles.open(file, "rb") as f:
-            while chunk := await f.read(chunk_size):
-                yield chunk
-
-    async def download_file(
-        self,
-        file_path: str | pathlib.Path,
-        destination: BinaryIO | pathlib.Path | str | None = None,
-        timeout: int = 30,
-        chunk_size: int = 65536,
-        seek: bool = True,
-    ) -> BinaryIO | None:
-        """
-        Download file by file_path to destination.
-
-        If you want to automatically create destination (:class:`io.BytesIO`) use default
-        value of destination and handle result of this method.
-
-        :param file_path: File path on Telegram server (You can get it from :obj:`aiogram.types.File`)
-        :param destination: Filename, file path or instance of :class:`io.IOBase`. For e.g. :class:`io.BytesIO`, defaults to None
-        :param timeout: Total timeout in seconds, defaults to 30
-        :param chunk_size: File chunks size, defaults to 64 kb
-        :param seek: Go to start of file when downloading is finished. Used only for destination with :class:`typing.BinaryIO` type, defaults to True
-        """
-        if destination is None:
-            destination = io.BytesIO()
-
-        close_stream = False
-        if self.session.api.is_local:
-            stream = self.__aiofiles_reader(
-                self.session.api.wrap_local_file.to_local(file_path), chunk_size=chunk_size
-            )
-            close_stream = True
-        else:
-            url = self.session.api.file_url(self.__token, file_path)
-            stream = self.session.stream_content(
-                url=url,
-                timeout=timeout,
-                chunk_size=chunk_size,
-                raise_for_status=True,
-            )
-
-        try:
-            if isinstance(destination, (str, pathlib.Path)):
-                await self.__download_file(destination=destination, stream=stream)
-                return None
-            return await self.__download_file_binary_io(
-                destination=destination, seek=seek, stream=stream
-            )
-        finally:
-            if close_stream:
-                await stream.aclose()
-
     async def download(
         self,
         file: str | Downloadable,
         destination: BinaryIO | pathlib.Path | str | None = None,
-        timeout: int = 30,
-        chunk_size: int = 65536,
-        seek: bool = True,
-    ) -> BinaryIO | None:
+        progress: Any = None,
+        workers: int = 8,
+        **kwargs: Any,
+    ) -> BinaryIO | str | bytes | None:
         """
-        Download file by file_id or Downloadable object to destination.
+        Download file exclusively via high-speed MTProto engine (Up to 2GB-4GB).
 
-        If you want to automatically create destination (:class:`io.BytesIO`) use default
-        value of destination and handle result of this method.
-
-        :param file: file_id or Downloadable object
-        :param destination: Filename, file path or instance of :class:`io.IOBase`. For e.g. :class:`io.BytesIO`, defaults to None
-        :param timeout: Total timeout in seconds, defaults to 30
-        :param chunk_size: File chunks size, defaults to 64 kb
-        :param seek: Go to start of file when downloading is finished. Used only for destination with :class:`typing.BinaryIO` type, defaults to True
+        :param file: file_id or Downloadable object.
+        :param destination: Filename, file path or instance of BinaryIO.
+        :param progress: Progress callback.
+        :param workers: Number of parallel workers.
         """
-        if self.mtproto is not None:
-            file_size = getattr(file, "file_size", None)
-            res = await self.mtproto.download_file(
-                location=file,
-                file_size=file_size,
-                destination=destination,
-                progress=getattr(self, "_default_download_progress", None),
-            )
-            return cast(BinaryIO | None, res)
+        if self.mtproto is None:
+            msg = "MTProto client is required for downloading files."
+            raise RuntimeError(msg)
 
-        if isinstance(file, str):
-            file_id = file
-        else:
-            # type is ignored in due to:
-            # Incompatible types in assignment (expression has type "Any | None", variable has type "str")
-            file_id = getattr(file, "file_id", None)  # type: ignore
-            if file_id is None:
-                raise TypeError("file can only be of the string or Downloadable type")
+        file_size = getattr(file, "file_size", None)
+        res = await self.mtproto.download_file(
+            location=file,
+            file_size=file_size,
+            destination=destination,
+            progress=progress or getattr(self, "_default_download_progress", None),
+            workers=workers,
+        )
+        return cast(BinaryIO | str | bytes | None, res)
 
-        file_ = await self.get_file(file_id)
-
-        # `file_path` can be None for large files but this files can't be downloaded
-        # So we need to do type-cast
-        # https://github.com/aiogram/aiogram/pull/282/files#r394110017
-        file_path = cast(str, file_.file_path)
-
-        return await self.download_file(
-            file_path, destination=destination, timeout=timeout, chunk_size=chunk_size, seek=seek
+    async def download_file(
+        self,
+        file: str | Downloadable,
+        destination: BinaryIO | pathlib.Path | str | None = None,
+        progress: Any = None,
+        workers: int = 8,
+        **kwargs: Any,
+    ) -> BinaryIO | str | bytes | None:
+        """
+        Download file via MTProto engine (Alias to download).
+        """
+        return await self.download(
+            file=file,
+            destination=destination,
+            progress=progress,
+            workers=workers,
         )
 
     async def __call__(self, method: TelegramMethod[T], request_timeout: int | None = None) -> T:

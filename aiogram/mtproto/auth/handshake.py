@@ -232,5 +232,5 @@ async def do_handshake(conn: TCPConnection) -> tuple[AuthKey, int]:
     salt_bytes = bytes(x ^ y for x, y in zip(new_nonce[:8], server_nonce[:8]))
     server_salt = struct.unpack("<q", salt_bytes)[0]
 
-    logger.info("MTProto handshake completed successfully. AuthKey ID: %s", repr(auth_key))
+    logger.info("MTProto handshake completed successfully")
     return auth_key, server_salt

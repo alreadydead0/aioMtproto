@@ -593,6 +593,16 @@ class Dispatcher(Router):
             if "bot" in workflow_data:
                 workflow_data.pop("bot")
 
+            # Auto-connect MTProto clients on deploy / polling startup
+            for bot in bots:
+                if bot.mtproto is not None and hasattr(bot.mtproto, "connect"):
+                    try:
+                        await bot.mtproto.connect()
+                    except Exception as e:
+                        loggers.dispatcher.warning(
+                            "MTProto pre-connection failed for bot %d: %s", bot.id, e
+                        )
+
             await self.emit_startup(bot=bots[-1], **workflow_data)
             loggers.dispatcher.info("Start polling")
             try:

@@ -9,12 +9,23 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-# Check for cryptographic backends
+# Check for cryptographic backends in order of performance
+_HAS_HYPERCRYPTO = False
 _HAS_TGCRYPTO = False
 _HAS_CRYPTG = False
 _HAS_PYCRYPTODOME_IGE = False
 _HAS_CRYPTOGRAPHY = False
 _HAS_PYCRYPTODOME = False
+
+_hypercrypto: Any = None
+try:
+    import hypercrypto as _hypercrypto
+
+    _HAS_HYPERCRYPTO = hasattr(_hypercrypto, "ige256_encrypt") and hasattr(
+        _hypercrypto, "ige256_decrypt"
+    )
+except ImportError:
+    pass
 
 _tgcrypto: Any = None
 try:
@@ -60,7 +71,7 @@ except ImportError:
 
 def _xor(a: bytes, b: bytes) -> bytes:
     """XOR two byte strings of equal length."""
-    return bytes(x ^ y for x, y in zip(a, b))
+    return bytes(x ^ y for x, y in zip(a, b, strict=True))
 
 
 class PureAES:
@@ -562,6 +573,10 @@ def aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         msg = f"IV length must be 32 bytes (got {len(iv)})"
         raise ValueError(msg)
 
+    # Ultra-Fast Tier 0: hypercrypto (Vectorized SIMD & hardware-accelerated Rust)
+    if _HAS_HYPERCRYPTO and _hypercrypto is not None:
+        return bytes(_hypercrypto.ige256_encrypt(data, key, iv))
+
     # Fast Tier 1: tgcrypto (C-accelerated whole buffer)
     if _HAS_TGCRYPTO and _tgcrypto is not None:
         return bytes(_tgcrypto.ige256_encrypt(data, key, iv))
@@ -613,6 +628,10 @@ def aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
         msg = f"IV length must be 32 bytes (got {len(iv)})"
         raise ValueError(msg)
 
+    # Ultra-Fast Tier 0: hypercrypto (Vectorized SIMD & hardware-accelerated Rust)
+    if _HAS_HYPERCRYPTO and _hypercrypto is not None:
+        return bytes(_hypercrypto.ige256_decrypt(data, key, iv))
+
     # Fast Tier 1: tgcrypto (C-accelerated whole buffer)
     if _HAS_TGCRYPTO and _tgcrypto is not None:
         return bytes(_tgcrypto.ige256_decrypt(data, key, iv))
@@ -648,20 +667,22 @@ def aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
 async def async_aes_ige_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
     """
     Asynchronously encrypt data using AES-256-IGE mode.
-    Offloads large buffers (> 64 KB) to a thread pool executor to prevent blocking the event loop.
+    HyperCrypto natively releases the GIL in Rust for large buffers, avoiding Python
+    thread pool overhead.
     """
-    if len(data) > CRYPTO_THREAD_POOL_THRESHOLD:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, aes_ige_encrypt, data, key, iv)
-    return aes_ige_encrypt(data, key, iv)
+    if _HAS_HYPERCRYPTO or len(data) <= CRYPTO_THREAD_POOL_THRESHOLD:
+        return aes_ige_encrypt(data, key, iv)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, aes_ige_encrypt, data, key, iv)
 
 
 async def async_aes_ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
     """
     Asynchronously decrypt data using AES-256-IGE mode.
-    Offloads large buffers (> 64 KB) to a thread pool executor to prevent blocking the event loop.
+    HyperCrypto natively releases the GIL in Rust for large buffers, avoiding Python
+    thread pool overhead.
     """
-    if len(data) > CRYPTO_THREAD_POOL_THRESHOLD:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, aes_ige_decrypt, data, key, iv)
-    return aes_ige_decrypt(data, key, iv)
+    if _HAS_HYPERCRYPTO or len(data) <= CRYPTO_THREAD_POOL_THRESHOLD:
+        return aes_ige_decrypt(data, key, iv)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, aes_ige_decrypt, data, key, iv)

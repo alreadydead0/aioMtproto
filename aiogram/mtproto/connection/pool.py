@@ -22,17 +22,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("aiogram.mtproto.pool")
 
-DEFAULT_POOL_SIZE = 4
-MAX_SAFE_POOL_SIZE = 8
+DEFAULT_POOL_SIZE = 8
+MAX_SAFE_POOL_SIZE = 16
 
 
 class TokenBucketLimiter:
     """
     Token-bucket rate limiter shared across all pooled connections to a specific DC.
-    Prevents flooding Telegram DC with concurrent bursts.
     """
 
-    def __init__(self, rate: float = 25.0, capacity: float = 25.0) -> None:
+    def __init__(self, rate: float = 500.0, capacity: float = 500.0) -> None:
         self.rate = rate  # Tokens per second
         self.capacity = capacity  # Maximum burst capacity
         self._tokens = capacity
@@ -94,6 +93,7 @@ class DCSessionPool:
         self._sessions: list[DCClientSession] = []
         self._lock = asyncio.Lock()
         self._auth_lock = asyncio.Lock()
+        self._warmup_task: asyncio.Task[None] | None = None
         self._initialized = False
 
     @property
@@ -106,7 +106,7 @@ class DCSessionPool:
 
     @property
     def is_ready(self) -> bool:
-        return self._initialized and any(s.is_ready for s in self._sessions)
+        return any(s.is_ready for s in self._sessions)
 
     @property
     def active_sessions_count(self) -> int:
@@ -135,54 +135,67 @@ class DCSessionPool:
         msg = f"No session_factory or dc_manager configured for DC {self.dc_id} pool"
         raise RuntimeError(msg)
 
-    async def init_pool(self) -> None:
+    async def _warmup_remaining(self, count: int) -> None:
         """
-        Initialize all sessions in the pool concurrently with partial-failure tolerance.
+        Background task to warm up remaining pooled sessions without delaying startup.
         """
+        tasks = [self._create_pooled_session() for _ in range(count)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         async with self._lock:
-            self._sessions = [s for s in self._sessions if s.is_ready]
-            needed = self.pool_size - len(self._sessions)
-            if needed <= 0 and self._sessions:
-                return
-
-            logger.info(
-                "[DC %d] Initializing session pool (needed=%d, total=%d)...",
-                self.dc_id,
-                needed,
-                self.pool_size,
-            )
-            tasks = [self._create_pooled_session() for _ in range(needed)]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            first_exc: BaseException | None = None
-
             for res in results:
                 if isinstance(res, BaseException):
-                    if first_exc is None:
-                        first_exc = res
-                    logger.warning("[DC %d] Pool session creation error: %s", self.dc_id, res)
+                    logger.debug(
+                        "[DC %d] Background pool warmup session error: %s", self.dc_id, res
+                    )
                 elif hasattr(res, "is_ready") and res.is_ready:
                     self._sessions.append(res)
                 elif hasattr(res, "close"):
-                    # Connected/handshaken but failed auth import — must be closed,
-                    # not just dropped, or its reader task leaks.
                     await res.close()
 
-            if not self._sessions:
-                if first_exc:
-                    raise first_exc
-                msg = f"Failed to initialize any session in pool for DC {self.dc_id}"
-                raise RuntimeError(msg)
-
-            self._initialized = True
             logger.info(
-                "[DC %d] Pool ready: %d/%d sessions active",
+                "[DC %d] Background pool warmup complete: %d/%d sessions active",
                 self.dc_id,
-                len(self._sessions),
+                len([s for s in self._sessions if s.is_ready]),
                 self.pool_size,
             )
 
-    initialize = init_pool
+    async def init_pool(self, wait_full: bool = True) -> None:
+        """
+        Initialize the pool.
+        If wait_full=False, enables fast-path 1st session with background lazy warmup.
+        """
+        async with self._lock:
+            self._sessions = [s for s in self._sessions if s.is_ready]
+            if len(self._sessions) >= self.pool_size:
+                self._initialized = True
+                return
+
+            if not self._sessions:
+                # Fast-path: Synchronously initialize the first session so media transfer starts instantly
+                logger.info(
+                    "[DC %d] Starting media session pool (fast-path 1st worker, total=%d)...",
+                    self.dc_id,
+                    self.pool_size,
+                )
+                first_session = await self._create_pooled_session()
+                self._sessions.append(first_session)
+                self._initialized = True
+                logger.info(
+                    "[DC %d] Media pool 1st worker ready -> unblocking transfer", self.dc_id
+                )
+
+            needed = self.pool_size - len(self._sessions)
+            if needed > 0 and (self._warmup_task is None or self._warmup_task.done()):
+                self._warmup_task = asyncio.create_task(self._warmup_remaining(needed))
+
+        if wait_full and self._warmup_task and not self._warmup_task.done():
+            await self._warmup_task
+
+    async def initialize(self) -> None:
+        """
+        Fully initialize all sessions in the pool.
+        """
+        await self.init_pool(wait_full=True)
 
     def get_session(self, worker_idx: int = 0) -> DCClientSession:
         """
@@ -202,9 +215,24 @@ class DCSessionPool:
         """
         Asynchronously ensure the pool is ready and return the worker's session.
         """
-        if not self.is_ready:
-            await self.init_pool()
-        return self.get_session(worker_idx)
+        if not self._initialized:
+            await self.init_pool(wait_full=False)
+
+        # If background warmup is in progress, wait briefly for worker's dedicated session
+        if self._warmup_task and not self._warmup_task.done():
+            ready_count = len([s for s in self._sessions if s.is_ready])
+            if worker_idx >= ready_count:
+                with contextlib.suppress(asyncio.TimeoutError, Exception):
+                    await asyncio.wait_for(asyncio.shield(self._warmup_task), timeout=2.0)
+
+        async with self._lock:
+            ready_sessions = [s for s in self._sessions if s.is_ready]
+            if worker_idx < len(ready_sessions):
+                return ready_sessions[worker_idx]
+            if ready_sessions:
+                return ready_sessions[worker_idx % len(ready_sessions)]
+            msg = f"Session pool for DC {self.dc_id} has no ready sessions"
+            raise RuntimeError(msg)
 
     async def invalidate_session(self, session: DCClientSession) -> None:
         """

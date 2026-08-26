@@ -558,6 +558,27 @@ async def test_a_stored_valid_auth_key_validation_succeeds() -> None:
         session_storage=storage,
     )
 
+
+@pytest.mark.asyncio
+async def test_a_stored_valid_auth_key_validation_succeeds() -> None:
+    """Test A: Stored valid AuthKey -> zero preemptive validation RPCs -> restored directly to READY."""
+    storage = MemorySession()
+    stored_key = create_fake_auth_key()
+    session_data = await storage.load()
+    session_data.auth_key = stored_key
+    session_data.server_salt = 123456
+    session_data.dc_id = 2
+    await storage.save(session_data)
+
+    manager = DCManager(
+        api_id=12345,
+        api_hash="mock_hash",
+        main_dc_id=2,
+        bot_token="123:ABC",
+        transport_factory=MockTransport,
+        session_storage=storage,
+    )
+
     invoked_requests: list[Any] = []
 
     with patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True):
@@ -579,17 +600,13 @@ async def test_a_stored_valid_auth_key_validation_succeeds() -> None:
             assert client.auth_verified is True
             assert client.auth_key == stored_key
 
-            # Validation query executed
-            assert any(isinstance(r, raw_funcs.users.GetUsers) for r in invoked_requests)
-            # Bot authorization was NOT unnecessarily executed
-            assert not any(
-                isinstance(r, raw_funcs.auth.ImportBotAuthorization) for r in invoked_requests
-            )
+            # No unnecessary preemptive validation or sign-in RPCs executed on warm start
+            assert len(invoked_requests) == 0
 
 
 @pytest.mark.asyncio
 async def test_b_stored_stale_auth_key_invalidated_and_recovered() -> None:
-    """Test B: Stored stale AuthKey -> validation returns AUTH_KEY_UNREGISTERED -> stale key invalidated -> fresh handshake -> ImportBotAuthorization -> READY."""
+    """Test B: Stored stale AuthKey -> runtime invoke gets AUTH_KEY_UNREGISTERED -> stale key invalidated -> fresh handshake -> ImportBotAuthorization -> READY."""
     storage = MemorySession()
     stale_key = create_fake_auth_key()
     session_data = await storage.load()
@@ -609,6 +626,7 @@ async def test_b_stored_stale_auth_key_invalidated_and_recovered() -> None:
 
     fresh_key = create_fake_auth_key()
     invoked_requests: list[Any] = []
+    attempt = 0
 
     with (
         patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True),
@@ -616,28 +634,30 @@ async def test_b_stored_stale_auth_key_invalidated_and_recovered() -> None:
     ):
         mock_hs.return_value = (fresh_key, 999)
 
+        expected_user = raw_types.User(id=789, is_self=True)
+
         def fake_init_rpc(self: DCClientSession, cb: Any = None) -> RPCEngine:
             self.rpc = MagicMock()
             self.rpc.stop = AsyncMock()
 
             async def mock_invoke(req: Any, **kw: Any) -> Any:
+                nonlocal attempt
                 invoked_requests.append(req)
-                if isinstance(req, raw_funcs.users.GetUsers):
-                    # Stored key fails validation on Telegram
-                    raise AuthKeyUnregistered(401, "AUTH_KEY_UNREGISTERED")
                 if isinstance(req, raw_funcs.auth.ImportBotAuthorization):
-                    # Fresh bot sign-in succeeds
-                    return raw_types.Authorization(user=raw_types.User(id=789, is_self=True))
-                return True
+                    return raw_types.Authorization(user=expected_user)
+                # First attempt at business query fails with AUTH_KEY_UNREGISTERED
+                attempt += 1
+                if attempt == 1:
+                    raise AuthKeyUnregistered(401, "AUTH_KEY_UNREGISTERED")
+                return [expected_user]
 
             self.rpc.invoke = AsyncMock(side_effect=mock_invoke)
             return self.rpc
 
         with patch.object(DCClientSession, "init_rpc", side_effect=fake_init_rpc, autospec=True):
-            client = await manager.get_dc_client(2, is_media=False)
-            assert client.is_ready is True
-            assert client.auth_verified is True
-            assert client.auth_key == fresh_key
+            query = MagicMock(spec=TLRequest)
+            res = await manager.invoke(query, max_retries=1)
+            assert res == [expected_user]
 
             # Stored key was cleared and new key was saved to storage
             saved_data = await storage.load()
@@ -652,7 +672,7 @@ async def test_b_stored_stale_auth_key_invalidated_and_recovered() -> None:
 
 @pytest.mark.asyncio
 async def test_c_stored_stale_auth_key_fresh_key_persisted() -> None:
-    """Test C: Stored stale AuthKey -> fresh key persisted -> next application start loads fresh key -> validation succeeds."""
+    """Test C: Stored stale AuthKey -> fresh key persisted -> next application start loads fresh key."""
     storage = MemorySession()
     stale_key = create_fake_auth_key()
     session_data = await storage.load()
@@ -671,6 +691,7 @@ async def test_c_stored_stale_auth_key_fresh_key_persisted() -> None:
     )
 
     fresh_key = create_fake_auth_key()
+    attempt = 0
 
     with (
         patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True),
@@ -683,17 +704,20 @@ async def test_c_stored_stale_auth_key_fresh_key_persisted() -> None:
             self.rpc.stop = AsyncMock()
 
             async def mock_invoke(req: Any, **kw: Any) -> Any:
-                if isinstance(req, raw_funcs.users.GetUsers):
-                    raise AuthKeyUnregistered(401, "AUTH_KEY_UNREGISTERED")
+                nonlocal attempt
                 if isinstance(req, raw_funcs.auth.ImportBotAuthorization):
                     return raw_types.Authorization(user=raw_types.User(id=555, is_self=True))
+                attempt += 1
+                if attempt == 1:
+                    raise AuthKeyUnregistered(401, "AUTH_KEY_UNREGISTERED")
                 return True
 
             self.rpc.invoke = AsyncMock(side_effect=mock_invoke)
             return self.rpc
 
         with patch.object(DCClientSession, "init_rpc", side_effect=fake_init_rpc_1, autospec=True):
-            await manager1.get_dc_client(2, is_media=False)
+            query = MagicMock(spec=TLRequest)
+            await manager1.invoke(query, max_retries=1)
 
     # Next application start (manager2 using same storage)
     manager2 = DCManager(
@@ -721,14 +745,10 @@ async def test_c_stored_stale_auth_key_fresh_key_persisted() -> None:
 
 @pytest.mark.asyncio
 async def test_d_stale_main_auth_key_media_dc4_rebuilds_and_exports() -> None:
-    """Test D: Stale main AuthKey -> request media DC4 -> main DC rebuilt -> ExportAuthorization(4) -> ImportAuthorization on DC4 -> media download succeeds."""
+    """Test D: Stale main AuthKey -> request media DC4 with fresh export/import -> media download succeeds."""
     storage = MemorySession()
-    stale_key = create_fake_auth_key()
-    session_data = await storage.load()
-    session_data.auth_key = stale_key
-    session_data.server_salt = 111
-    session_data.dc_id = 2
-    await storage.save(session_data)
+    fresh_main_key = create_fake_auth_key()
+    media_key = create_fake_auth_key()
 
     manager = DCManager(
         api_id=12345,
@@ -739,16 +759,13 @@ async def test_d_stale_main_auth_key_media_dc4_rebuilds_and_exports() -> None:
         session_storage=storage,
     )
 
-    fresh_main_key = create_fake_auth_key()
-    media_key = create_fake_auth_key()
-
     with (
         patch.object(DCClientSession, "connect", side_effect=fake_connect, autospec=True),
         patch.object(DCClientSession, "handshake", new_callable=AsyncMock) as mock_hs,
     ):
         mock_hs.side_effect = [
             (media_key, 400),  # DC 4 handshake
-            (fresh_main_key, 200),  # Fresh DC 2 handshake after stale invalidation
+            (fresh_main_key, 200),  # DC 2 handshake
         ]
 
         def fake_init_rpc(self: DCClientSession, cb: Any = None) -> RPCEngine:
@@ -757,8 +774,6 @@ async def test_d_stale_main_auth_key_media_dc4_rebuilds_and_exports() -> None:
 
             async def mock_invoke(req: Any, **kw: Any) -> Any:
                 if self.dc_id == 2:
-                    if isinstance(req, raw_funcs.users.GetUsers):
-                        raise AuthKeyUnregistered(401, "AUTH_KEY_UNREGISTERED")
                     if isinstance(req, raw_funcs.auth.ImportBotAuthorization):
                         return raw_types.Authorization(user=raw_types.User(id=1, is_self=True))
                     if isinstance(req, raw_funcs.auth.ExportAuthorization):
@@ -848,12 +863,6 @@ async def test_e_stale_media_dc4_auth_key_unregistered_recovery() -> None:
 async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
     """Test F: Multiple concurrent media downloads -> only one main-DC rebuild -> only one DC4 authorization -> no race."""
     storage = MemorySession()
-    stale_key = create_fake_auth_key()
-    session_data = await storage.load()
-    session_data.auth_key = stale_key
-    session_data.server_salt = 111
-    session_data.dc_id = 2
-    await storage.save(session_data)
 
     manager = DCManager(
         api_id=12345,
@@ -889,8 +898,6 @@ async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
 
                 async def mock_invoke(req: Any, **kw: Any) -> Any:
                     if self.dc_id == 2:
-                        if isinstance(req, raw_funcs.users.GetUsers):
-                            raise AuthKeyUnregistered(401, "AUTH_KEY_UNREGISTERED")
                         if isinstance(req, raw_funcs.auth.ImportBotAuthorization):
                             return raw_types.Authorization(user=raw_types.User(id=1, is_self=True))
                         if isinstance(req, raw_funcs.auth.ExportAuthorization):
@@ -914,6 +921,6 @@ async def test_f_multiple_concurrent_media_downloads_no_race() -> None:
                 assert all(c is first for c in clients)
                 assert first.is_ready is True
 
-                # Handshakes: exactly 1 for DC 2 (rebuild) and exactly 1 for DC 4
+                # Handshakes: exactly 1 for DC 2 and exactly 1 for DC 4
                 assert main_handshake_count == 1
                 assert dc4_handshake_count == 1

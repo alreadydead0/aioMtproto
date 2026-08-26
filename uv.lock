@@ -63,6 +63,7 @@ docs = [
 ]
 fast = [
     { name = "aiodns" },
+    { name = "hypercrypto", marker = "platform_python_implementation != 'PyPy'" },
     { name = "tgcrypto", marker = "platform_python_implementation != 'PyPy'" },
     { name = "uvloop", marker = "(platform_python_implementation != 'PyPy' and sys_platform == 'darwin') or (platform_python_implementation != 'PyPy' and sys_platform == 'linux')" },
 ]
@@ -115,6 +116,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2023.7.22" },
     { name = "cryptography", marker = "extra == 'signature'", specifier = ">=46.0.0" },
     { name = "furo", marker = "extra == 'docs'", specifier = "~=2024.8.6" },
+    { name = "hypercrypto", marker = "platform_python_implementation != 'PyPy' and extra == 'fast'", specifier = ">=0.1.1" },
     { name = "magic-filter", specifier = ">=1.0.12,<1.1" },
     { name = "markdown-include", marker = "extra == 'docs'", specifier = "~=0.8.1" },
     { name = "motor", marker = "extra == 'mongo'", specifier = ">=3.3.2,<3.8" },
@@ -1168,6 +1170,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/3a/4fe39a169115434f911abff08ff485b9b6201c168500e112b3f6a8110c0a/hiredis-3.3.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:a110d19881ca78a88583d3b07231e7c6864864f5f1f3491b638863ea45fa8708", size = 176126, upload-time = "2026-03-16T15:20:31.958Z" },
     { url = "https://files.pythonhosted.org/packages/44/99/c1d0b0bc4f9e9150e24beb0dca2e186e32d5e749d0022e0d26453749ed51/hiredis-3.3.1-cp314-cp314t-win32.whl", hash = "sha256:98fd5b39410e9d69e10e90d0330e35650becaa5dd2548f509b9598f1f3c6124d", size = 22028, upload-time = "2026-03-16T15:20:33.33Z" },
     { url = "https://files.pythonhosted.org/packages/35/d6/191e6741addc97bcf5e755661f8c82f0fd0aa35f07ece56e858da689b57e/hiredis-3.3.1-cp314-cp314t-win_amd64.whl", hash = "sha256:ab1f646ff531d70bfd25f01e60708dfa3d105eb458b7dedd9fe9a443039fd809", size = 23811, upload-time = "2026-03-16T15:20:34.292Z" },
+]
+
+[[package]]
+name = "hypercrypto"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/be/57afe01377ca2dc0899698c7e10eba59972bd814df11baa58420a679367b/hypercrypto-0.1.1.tar.gz", hash = "sha256:d87b0344c4bd150b3db6d837ef5b503910c4ee907a3b3ce755fb1ea273210bb1", size = 11140, upload-time = "2026-08-24T13:50:47.326Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/76/67fd5c3fe7ab8554f416a72d41278098a7d904f92c3e8e5f60029e8da43c/hypercrypto-0.1.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a6bde50127242718aa72668a85d7deb6b73ca5c29c1d56f8660111fa7d499493", size = 215355, upload-time = "2026-08-24T13:50:41.309Z" },
+    { url = "https://files.pythonhosted.org/packages/10/66/4c7b986a8e5cd8f87f82fe8045f28757552a46a773b35c122bcb62666546/hypercrypto-0.1.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:5b9911b358110440f4f5b33b3f02b23e780a2eaa7557f555b17b9cda2a656395", size = 201886, upload-time = "2026-08-24T13:50:42.731Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/78/f91decd7e5fcef2ac693bd96b9cf35192f86c3e3e6cb069b552bcf2cbd1a/hypercrypto-0.1.1-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b14d775da5c634a6e1ce73c19d2c77f4bb190b43f2c0ec74a1423705d6376768", size = 215515, upload-time = "2026-08-24T13:50:44.032Z" },
+    { url = "https://files.pythonhosted.org/packages/db/fc/85e274c68d70958792e242d8360bef8da39fe364602a08c05d9e08891774/hypercrypto-0.1.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:641b72848ab9370e3be5ad0a2d9516cf4ff24ebf07f37a6bed98c2d101531017", size = 226394, upload-time = "2026-08-24T13:50:45.133Z" },
+    { url = "https://files.pythonhosted.org/packages/92/cf/cab108fac65043b7effd1733ab9f3e472634a0f6e858ef6dd9958b3f5d65/hypercrypto-0.1.1-cp310-abi3-win_amd64.whl", hash = "sha256:d339ec7b3678c83972fdbb6d4ac3f67a0b75942a1dbdd0b985ef898f8c761688", size = 137978, upload-time = "2026-08-24T13:50:46.385Z" },
 ]
 
 [[package]]

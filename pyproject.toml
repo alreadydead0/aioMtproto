@@ -58,6 +58,7 @@ fast = [
     "uvloop>=0.17.0; (sys_platform == 'darwin' or sys_platform == 'linux') and platform_python_implementation != 'PyPy' and python_version < '3.13'",
     "uvloop>=0.21.0; (sys_platform == 'darwin' or sys_platform == 'linux') and platform_python_implementation != 'PyPy' and python_version >= '3.13'",
     "aiodns>=3.0.0",
+    "hypercrypto>=0.1.1; platform_python_implementation != 'PyPy'",
     "tgcrypto>=1.2.0; platform_python_implementation != 'PyPy'",
 ]
 redis = [

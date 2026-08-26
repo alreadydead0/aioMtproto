@@ -11,6 +11,10 @@ import struct
 import zlib
 from collections.abc import AsyncGenerator
 
+_STRUCT_I = struct.Struct("<I")
+_STRUCT_i = struct.Struct("<i")
+_STRUCT_II = struct.Struct("<II")
+
 
 class BaseTransport(abc.ABC):
     """
@@ -70,11 +74,11 @@ class IntermediateTransport(BaseTransport):
     HEADER = b"\xee\xee\xee\xee"
 
     def pack(self, payload: bytes) -> bytes:
-        return struct.pack("<I", len(payload)) + payload
+        return _STRUCT_I.pack(len(payload)) + payload
 
     async def read_packet(self, reader: asyncio.StreamReader) -> bytes:
         length_bytes = await reader.readexactly(4)
-        length = struct.unpack("<i", length_bytes)[0]
+        length = _STRUCT_i.unpack(length_bytes)[0]
         if length < 0:
             return length_bytes
         return await reader.readexactly(length)
@@ -94,14 +98,13 @@ class PaddedIntermediateTransport(BaseTransport):
         pad_len = os.urandom(1)[0] % 16
         padding = os.urandom(pad_len)
         total_len = len(payload) + pad_len
-        return struct.pack("<I", total_len) + payload + padding
+        return _STRUCT_I.pack(total_len) + payload + padding
 
     async def read_packet(self, reader: asyncio.StreamReader) -> bytes:
         length_bytes = await reader.readexactly(4)
-        length = struct.unpack("<i", length_bytes)[0]
+        length = _STRUCT_i.unpack(length_bytes)[0]
         if length < 0:
             return length_bytes
-        # In padded intermediate, the whole padded buffer is read
         return await reader.readexactly(length)
 
 
@@ -121,19 +124,18 @@ class FullTransport(BaseTransport):
 
     def pack(self, payload: bytes) -> bytes:
         length = len(payload) + 12
-        packet = struct.pack("<II", length, self.send_seq_no) + payload
-        crc = struct.pack("<I", zlib.crc32(packet) & 0xFFFFFFFF)
+        packet = _STRUCT_II.pack(length, self.send_seq_no) + payload
+        crc = _STRUCT_I.pack(zlib.crc32(packet) & 0xFFFFFFFF)
         self.send_seq_no += 1
         return packet + crc
 
     async def read_packet(self, reader: asyncio.StreamReader) -> bytes:
         length_bytes = await reader.readexactly(4)
-        length = struct.unpack("<I", length_bytes)[0]
+        length = _STRUCT_I.unpack(length_bytes)[0]
         rest = await reader.readexactly(length - 4)
 
-        seq_no = struct.unpack("<I", rest[:4])[0]
         payload = rest[4:-4]
-        crc_received = struct.unpack("<I", rest[-4:])[0]
+        crc_received = _STRUCT_I.unpack(rest[-4:])[0]
 
         expected_crc = zlib.crc32(length_bytes + rest[:-4]) & 0xFFFFFFFF
         if crc_received != expected_crc:

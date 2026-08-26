@@ -5,6 +5,16 @@ MTProto 2.0 Key Derivation Function (KDF).
 from __future__ import annotations
 
 import hashlib
+from typing import Any, cast
+
+_HAS_HYPERCRYPTO = False
+_hypercrypto: Any = None
+try:
+    import hypercrypto as _hypercrypto
+
+    _HAS_HYPERCRYPTO = hasattr(_hypercrypto, "kdf") and hasattr(_hypercrypto, "sha256")
+except ImportError:
+    pass
 
 
 def compute_kdf(auth_key: bytes, msg_key: bytes, is_client: bool) -> tuple[bytes, bytes]:
@@ -24,6 +34,9 @@ def compute_kdf(auth_key: bytes, msg_key: bytes, is_client: bool) -> tuple[bytes
     :param is_client: True if the message was sent by the client, False if by the server.
     :return: (aes_key, aes_iv) both 32 bytes.
     """
+    if _HAS_HYPERCRYPTO and _hypercrypto is not None:
+        return cast("tuple[bytes, bytes]", _hypercrypto.kdf(auth_key, msg_key, is_client))
+
     x = 0 if is_client else 8
 
     sha256_a = hashlib.sha256(msg_key + auth_key[x : x + 36]).digest()
@@ -51,5 +64,9 @@ def compute_msg_key(auth_key: bytes, plaintext: bytes, is_client: bool) -> bytes
     :return: 16-byte msg_key (middle 128 bits of SHA256).
     """
     x = 0 if is_client else 8
+    if _HAS_HYPERCRYPTO and _hypercrypto is not None:
+        msg_key_large = _hypercrypto.sha256(auth_key[88 + x : 88 + x + 32] + plaintext)
+        return cast(bytes, msg_key_large[8:24])
+
     msg_key_large = hashlib.sha256(auth_key[88 + x : 88 + x + 32] + plaintext).digest()
     return msg_key_large[8:24]

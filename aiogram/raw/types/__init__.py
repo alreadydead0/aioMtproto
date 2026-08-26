@@ -229,6 +229,7 @@ class User(TLObject):
 
     def write(self) -> bytes:
         flags = 0
+        flags2 = 0
         if self.is_self:
             flags |= 1 << 10
         if self.contact:
@@ -275,10 +276,22 @@ class User(TLObject):
             flags |= 1 << 3
         if self.phone is not None:
             flags |= 1 << 4
-        if self.lang_code is not None:
-            flags |= 1 << 22
+        if self.bot_can_edit:
+            flags2 |= 1 << 1
+        if self.close_friend:
+            flags2 |= 1 << 2
+        if self.stories_hidden:
+            flags2 |= 1 << 3
+        if self.stories_unavailable:
+            flags2 |= 1 << 4
+        if self.contact_require_premium:
+            flags2 |= 1 << 10
+        if self.bot_business:
+            flags2 |= 1 << 11
+        if self.bot_has_main_app:
+            flags2 |= 1 << 13
 
-        res = struct.pack("<IIq", self.ID, flags, self.id)
+        res = struct.pack("<IIIq", self.ID, flags, flags2, self.id)
         if self.access_hash is not None:
             res += write_long(self.access_hash)
         if self.first_name is not None:
@@ -294,8 +307,7 @@ class User(TLObject):
     @classmethod
     def read(cls, b: BinaryIO) -> User:
         flags = read_uint(b)
-        if flags & (1 << 30):
-            read_uint(b)
+        flags2 = read_uint(b)
         user_id = read_long(b)
         access_hash = read_long(b) if (flags & (1 << 0)) else None
         first_name = read_string(b) if (flags & (1 << 1)) else None
@@ -323,6 +335,13 @@ class User(TLObject):
             bot_attach_menu=bool(flags & (1 << 27)),
             premium=bool(flags & (1 << 28)),
             attach_menu_enabled=bool(flags & (1 << 29)),
+            bot_can_edit=bool(flags2 & (1 << 1)),
+            close_friend=bool(flags2 & (1 << 2)),
+            stories_hidden=bool(flags2 & (1 << 3)),
+            stories_unavailable=bool(flags2 & (1 << 4)),
+            contact_require_premium=bool(flags2 & (1 << 10)),
+            bot_business=bool(flags2 & (1 << 11)),
+            bot_has_main_app=bool(flags2 & (1 << 13)),
             access_hash=access_hash,
             first_name=first_name,
             last_name=last_name,
@@ -396,7 +415,7 @@ class Message(TLObject):
     def read(cls, b: BinaryIO) -> Message:
         flags = read_uint(b)
         msg_id = read_int(b)
-        from_id = None
+        from_id: Peer | None = None
         if flags & (1 << 8):
             peer_c_id = read_uint(b)
             if peer_c_id == PeerUser.ID:
@@ -408,6 +427,7 @@ class Message(TLObject):
 
         # peer_id
         peer_c_id = read_uint(b)
+        peer_id: Peer
         if peer_c_id == PeerUser.ID:
             peer_id = PeerUser.read(b)
         elif peer_c_id == PeerChat.ID:
@@ -809,8 +829,22 @@ class Authorization(TLObject):
     def read(cls, b: BinaryIO) -> Authorization:
         flags = read_uint(b)
         setup_pwd = bool(flags & (1 << 1))
-        read_uint(b)  # user constructor
-        user = User.read(b)
+        if flags & (1 << 1):
+            read_int(b)  # otherwise_relogin_days
+        if flags & (1 << 0):
+            read_int(b)  # tmp_sessions
+        if flags & (1 << 2):
+            read_bytes(b)  # future_auth_token
+
+        # user may be boxed User, userEmpty, or bare User
+        c_id = read_uint(b)
+        if c_id == 0xD3BC4B7A:  # userEmpty
+            user = User(id=read_long(b))
+        elif c_id in (0x215C4438, 0x83314F16):  # User
+            user = User.read(b)
+        else:
+            b.seek(b.tell() - 4)
+            user = User.read(b)
         return Authorization(user=user, setup_password_required=setup_pwd)
 
 

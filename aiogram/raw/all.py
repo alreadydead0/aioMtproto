@@ -15,6 +15,10 @@ from aiogram.raw.core.tl_core_types import (
     DhGenOk,
     GzipPacked,
     MsgsAck,
+    NewSessionCreated,
+    Ping,
+    PingDelayDisconnect,
+    Pong,
     ResPQ,
     RpcError,
     RpcResult,
@@ -77,6 +81,10 @@ TL_REGISTRY: dict[int, type[TLObject]] = {
     MsgsAck.ID: MsgsAck,
     BadServerSalt.ID: BadServerSalt,
     BadMsgNotification.ID: BadMsgNotification,
+    NewSessionCreated.ID: NewSessionCreated,
+    Pong.ID: Pong,
+    Ping.ID: Ping,
+    PingDelayDisconnect.ID: PingDelayDisconnect,
     ResPQ.ID: ResPQ,
     ServerDHParamsOk.ID: ServerDHParamsOk,
     DhGenOk.ID: DhGenOk,
@@ -109,6 +117,8 @@ TL_REGISTRY: dict[int, type[TLObject]] = {
     StorageFileMp4.ID: StorageFileMp4,
     StorageFileWebp.ID: StorageFileWebp,
     User.ID: User,
+    0x83314F16: User,
+    0xD3BC4B7A: User,
     Message.ID: Message,
     0x761453C7: Message,
     UpdateShort.ID: UpdateShort,
@@ -126,6 +136,10 @@ TL_REGISTRY: dict[int, type[TLObject]] = {
     NearestDc.ID: NearestDc,
     SentCode.ID: SentCode,
     Authorization.ID: Authorization,
+    0x2EA2C0D4: Authorization,
+    0xCD0509A6: Authorization,
+    0xB9BC2B17: Authorization,
+    0x44747E9A: Authorization,
     ExportedAuthorization.ID: ExportedAuthorization,
     ExportedAuthorizationLegacy.ID: ExportedAuthorizationLegacy,
 }
@@ -134,12 +148,28 @@ TL_REGISTRY: dict[int, type[TLObject]] = {
 def read_tl_object(b: BinaryIO) -> Any:
     """
     Read constructor ID and instantiate corresponding TL object.
-    Handles GzipPacked automatically.
+    Handles GzipPacked, boxed vectors, booleans, and known TL types automatically.
     """
     c_id_bytes = b.read(4)
     if not c_id_bytes or len(c_id_bytes) < 4:
         return None
     c_id = struct.unpack("<I", c_id_bytes)[0]
+
+    # Vector
+    if c_id == 0x1CB5C415:
+        count_bytes = b.read(4)
+        if len(count_bytes) < 4:
+            raise ValueError("Truncated vector length in read_tl_object")
+        count = struct.unpack("<I", count_bytes)[0]
+        if count > 100000:
+            raise ValueError(f"Vector count {count} exceeds sanity limit in read_tl_object")
+        return [read_tl_object(b) for _ in range(count)]
+
+    # boolTrue / boolFalse
+    if c_id == 0x997275B5:
+        return True
+    if c_id == 0xBC799737:
+        return False
 
     if c_id == GzipPacked.ID:
         decompressed = GzipPacked.read(b)
@@ -149,5 +179,13 @@ def read_tl_object(b: BinaryIO) -> Any:
     if cls is not None:
         return cls.read(b)
 
-    msg = f"Unknown TL constructor ID: {c_id:#010x}"
+    offset = b.tell() - 4 if hasattr(b, "tell") else -1
+    remaining = -1
+    if isinstance(b, io.BytesIO):
+        remaining = len(b.getvalue()) - b.tell()
+
+    msg = (
+        f"Unknown TL constructor ID: {c_id:#010x} "
+        f"at stream offset {offset} (remaining payload: {remaining} bytes)"
+    )
     raise ValueError(msg)

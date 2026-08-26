@@ -159,12 +159,14 @@ class DCClientSession:
         self.server_salt = server_salt
         self.session_id = generate_session_id()
         self.state = DCState.HANDSHAKEN
-        logger.info(
-            "[DC %d] Handshake complete auth_key_id=%016x session_id=%016x",
-            self.dc_id,
-            self.auth_key.key_id & 0xFFFFFFFFFFFFFFFF,
-            self.session_id & 0xFFFFFFFFFFFFFFFF,
-        )
+
+        # Reconnect fresh TCP connection with transport header for encrypted MTProto sessions
+        await self.connection.close()
+        dc = get_dc(self.dc_id, test_mode=self.test_mode)
+        self.connection = TCPConnection(dc=dc, transport=self.transport)
+        await self.connection.connect()
+
+        logger.info("[DC %d] Handshake completed successfully", self.dc_id)
         return auth_key, server_salt
 
     def init_rpc(self, update_handler: Callable[[Any], None] | None = None) -> RPCEngine:
@@ -239,11 +241,7 @@ class DCClientSession:
         logger.debug("[DC %d] DC client session invalidated (v%d)", self.dc_id, self.version)
 
     def __repr__(self) -> str:
-        key_id = f"{self.auth_key.key_id:#018x}" if self.auth_key else "None"
-        return (
-            f"<DCClientSession dc_id={self.dc_id} is_media={self.is_media} "
-            f"state={self.state.value} auth_key_id={key_id} session_id={self.session_id:#018x}>"
-        )
+        return f"<DCClientSession dc_id={self.dc_id} is_media={self.is_media} state={self.state.value}>"
 
 
 class DCManager:
@@ -311,21 +309,22 @@ class DCManager:
             msg = "DCManager is closed"
             raise RuntimeError(msg)
 
+        session_data: SessionData | None = None
+
+        # Pre-check stored DC migration for main DC before connecting TCP
+        if not is_media and self.session_storage:
+            session_data = await self.session_storage.load()
+            if session_data.dc_id and session_data.auth_key:
+                self.main_dc_id = session_data.dc_id
+                dc_id = self.main_dc_id
+
         dc_lock = self.get_dc_lock(dc_id)
         async with dc_lock:
             # 1. Check if an active, healthy, READY session exists
             existing = self._sessions.get(dc_id)
             if existing is not None:
                 if existing.is_ready:
-                    key_id_int = (
-                        existing.auth_key.key_id & 0xFFFFFFFFFFFFFFFF if existing.auth_key else 0
-                    )
-                    logger.debug(
-                        "[DC %d] Reusing active READY DC client (key=%016x, session=%016x)",
-                        dc_id,
-                        key_id_int,
-                        existing.session_id & 0xFFFFFFFFFFFFFFFF,
-                    )
+                    logger.debug("[DC %d] Reusing active READY DC client session", dc_id)
                     existing.last_used = time.monotonic()
                     return existing
 
@@ -341,7 +340,7 @@ class DCManager:
                 self._sessions.pop(dc_id, None)
 
             # 2. Build a fresh DCClientSession
-            logger.info("[DC %d] state NEW -> CONNECTING (is_media=%s)", dc_id, is_media)
+            logger.info("[DC %d] Connecting (is_media=%s)", dc_id, is_media)
             session = DCClientSession(
                 dc_id=dc_id,
                 is_media=is_media,
@@ -354,100 +353,69 @@ class DCManager:
                 await session.connect()
                 logger.info("[DC %d] TCP connected", dc_id)
 
-                if dc_id == self.main_dc_id and not is_media:
-                    # ------------------------------------------------------------------
-                    # MAIN DC FLOW
-                    # ------------------------------------------------------------------
-                    loaded_from_storage = False
-                    if self.session_storage:
-                        session_data = await self.session_storage.load()
-                        if session_data.auth_key and session_data.dc_id == dc_id:
-                            session.auth_key = session_data.auth_key
-                            session.server_salt = session_data.server_salt
-                            session.state = DCState.HANDSHAKEN
-                            loaded_from_storage = True
-                            logger.info(
-                                "[DC %d] Loaded existing auth_key (id=%016x) from session storage",
-                                dc_id,
-                                session.auth_key.key_id & 0xFFFFFFFFFFFFFFFF,
-                            )
+                loaded_from_storage = False
+                session_data = None
 
-                    if loaded_from_storage:
-                        # Initialize RPC Engine for validation
-                        session.init_rpc(self._on_update)
+                if self.session_storage:
+                    session_data = await self.session_storage.load()
+                    auth_tuple = session_data.get_dc_auth(dc_id)
+                    if auth_tuple:
+                        stored_key, stored_salt = auth_tuple
+                        session.auth_key = stored_key
+                        session.server_salt = stored_salt
+                        session.state = DCState.HANDSHAKEN
+                        loaded_from_storage = True
+                        logger.info("[DC %d] Loaded persisted auth session from storage", dc_id)
+
+                if loaded_from_storage:
+                    session.init_rpc(self._on_update)
+                    if not is_media:
+                        session.auth_verified = True
+                        session.state = DCState.READY
+                        session.start_keepalive()
                         logger.info(
-                            "[DC %d] Validating stored authorization with Telegram...", dc_id
+                            "[DC %d] Restored main DC session -> READY",
+                            dc_id,
                         )
-                        is_valid = False
-                        try:
-                            await session.invoke(
-                                raw_funcs.users.GetUsers(id=[raw_types.InputPeerSelf()]),
-                                timeout=10.0,
-                            )
-                            is_valid = True
-                            logger.info("[DC %d] Stored authorization is VALID", dc_id)
-                        except (AuthKeyUnregistered, AuthKeyNotFound, Unauthorized) as val_err:
-                            logger.warning(
-                                "[DC %d] Stored auth is INVALID (%s). Rebuilding session...",
-                                dc_id,
-                                val_err,
-                            )
-                        except Exception as other_err:
-                            logger.debug("[DC %d] Validation check response: %s", dc_id, other_err)
-                            is_valid = True
-
-                        if is_valid:
-                            session.auth_verified = True
+                        self._sessions[dc_id] = session
+                        return session
+                    else:
+                        if session_data and dc_id in session_data.auth_imported_dcs:
+                            session.auth_imported = True
                             session.state = DCState.READY
                             session.start_keepalive()
-                            logger.info("[DC %d] state HANDSHAKEN -> AUTHORIZED -> READY", dc_id)
+                            logger.info(
+                                "[DC %d] Restored Media DC session -> READY",
+                                dc_id,
+                            )
+                            self._sessions[dc_id] = session
+                            return session
+                        else:
+                            await self._import_media_auth(session, dc_id)
                             self._sessions[dc_id] = session
                             return session
 
-                        # Invalidate stale key from session storage and rebuild fresh
-                        logger.info(
-                            "[DC %d] Invalidating stale AuthKey and performing fresh handshake...",
-                            dc_id,
-                        )
-                        await session.close()
-                        if self.session_storage:
-                            await self.session_storage.invalidate_auth_key()
+                # Perform fresh DH Handshake if no valid persisted key exists
+                logger.info("[DC %d] Performing MTProto DH handshake...", dc_id)
+                auth_key, server_salt = await session.handshake()
+                session.auth_key = auth_key
+                session.server_salt = server_salt
+                logger.info("[DC %d] MTProto handshake completed successfully", dc_id)
 
-                        session = DCClientSession(
-                            dc_id=dc_id,
-                            is_media=False,
-                            test_mode=self.test_mode,
-                            transport=self.transport_factory(),
-                            api_id=self.api_id,
-                        )
-                        await session.connect()
+                # Initialize RPC Engine
+                session.init_rpc(self._on_update)
 
-                    # Perform fresh DH Handshake
-                    logger.info("[DC %d] Performing MTProto DH handshake...", dc_id)
-                    auth_key, server_salt = await session.handshake()
-                    session.auth_key = auth_key
-                    session.server_salt = server_salt
-                    logger.info(
-                        "[DC %d] Handshake complete auth_key_id=%016x",
-                        dc_id,
-                        session.auth_key.key_id & 0xFFFFFFFFFFFFFFFF if session.auth_key else 0,
-                    )
+                # Persist raw key data
+                if self.session_storage:
+                    session_data = await self.session_storage.load()
+                    session_data.set_dc_auth(dc_id, session.auth_key, session.server_salt)
+                    dc_info = get_dc(dc_id, test_mode=self.test_mode)
+                    session_data.server_address = dc_info.ip_address
+                    session_data.port = dc_info.port
+                    await self.session_storage.save(session_data)
 
-                    # Initialize RPC Engine
-                    session.init_rpc(self._on_update)
-
-                    # Persist raw key data
-                    if self.session_storage:
-                        session_data = await self.session_storage.load()
-                        session_data.auth_key = session.auth_key
-                        session_data.server_salt = session.server_salt
-                        session_data.dc_id = dc_id
-                        dc_info = get_dc(dc_id, test_mode=self.test_mode)
-                        session_data.server_address = dc_info.ip_address
-                        session_data.port = dc_info.port
-                        await self.session_storage.save(session_data)
-
-                    # Authenticate bot if bot_token is present
+                # Authenticate bot if main DC and bot_token is present
+                if dc_id == self.main_dc_id and not is_media:
                     if self.bot_token:
                         session.state = DCState.AUTHORIZING
                         logger.info("[DC %d] Signing in bot on main DC...", dc_id)
@@ -474,92 +442,33 @@ class DCManager:
                                 session_data.dc_id = mig_err.new_dc
                                 session_data.auth_key = None
                                 session_data.server_salt = 0
+                                session_data.set_dc_auth(dc_id, None)
+                                session_data.set_dc_auth(mig_err.new_dc, None)
                                 await self.session_storage.save(session_data)
                             return await self.get_dc_client(mig_err.new_dc, is_media=False)
 
                         session.auth_verified = True
-                        user_id = getattr(getattr(res, "user", None), "id", None)
-                        logger.info(
-                            "[DC %d] Bot authorization successful (user_id=%s)",
-                            dc_id,
-                            user_id,
-                        )
+                        session.state = DCState.READY
+                        session.start_keepalive()
                         if self.session_storage:
                             session_data = await self.session_storage.load()
-                            session_data.user_id = user_id
+                            session_data.user_id = getattr(getattr(res, "user", None), "id", None)
                             session_data.is_bot = True
+                            session_data.dc_id = dc_id
+                            session_data.set_dc_auth(dc_id, session.auth_key, session.server_salt)
                             await self.session_storage.save(session_data)
                     else:
                         session.auth_verified = True
+                        session.state = DCState.READY
+                        session.start_keepalive()
+                elif is_media:
+                    await self._import_media_auth(session, dc_id)
 
-                    session.state = DCState.READY
-                    session.start_keepalive()
-                    logger.info("[DC %d] state HANDSHAKEN -> AUTHORIZED -> READY", dc_id)
-                    self._sessions[dc_id] = session
-                    return session
-
-                # ------------------------------------------------------------------
-                # MEDIA DC (non-main DC) FLOW
-                # ------------------------------------------------------------------
-                logger.info("[DC %d] Performing Media DC DH handshake...", dc_id)
-                auth_key, server_salt = await session.handshake()
-                session.auth_key = auth_key
-                session.server_salt = server_salt
-                logger.info(
-                    "[DC %d] Media DC handshake complete auth_key_id=%016x",
-                    dc_id,
-                    session.auth_key.key_id & 0xFFFFFFFFFFFFFFFF if session.auth_key else 0,
-                )
-
-                # Initialize RPC Engine
-                session.init_rpc(None)
-
-                # Export auth from main DC and import into media DC
-                session.state = DCState.AUTHORIZING
-                logger.info(
-                    "[DC %d] state HANDSHAKEN -> AUTHORIZING. Exporting auth from main DC %d...",
-                    dc_id,
-                    self.main_dc_id,
-                )
-
-                # Obtain validated main DC client
-                main_client = await self._get_main_client_unlocked()
-
-                exported = await main_client.invoke(
-                    raw_funcs.auth.ExportAuthorization(dc_id=dc_id)
-                )
-                auth_id = getattr(exported, "id", None)
-                auth_bytes = getattr(exported, "bytes_data", getattr(exported, "bytes", None))
-
-                if auth_id is None or auth_bytes is None:
-                    msg = (
-                        f"Invalid ExportedAuthorization from main DC {self.main_dc_id} "
-                        f"for target DC {dc_id}"
-                    )
-                    raise Unauthorized(401, msg)
-
-                logger.info(
-                    "[DC %d] Importing exported authorization (id=%d, bytes=%d)...",
-                    dc_id,
-                    auth_id,
-                    len(auth_bytes),
-                )
-                await session.invoke(
-                    raw_funcs.auth.ImportAuthorization(id=auth_id, bytes_data=auth_bytes)
-                )
-                session.auth_imported = True
-                session.state = DCState.READY
-                session.start_keepalive()
-                logger.info("[DC %d] Authorization import successful -> READY", dc_id)
                 self._sessions[dc_id] = session
+                logger.info("[DC %d] Session ready", dc_id)
                 return session
 
-            except Exception as exc:
-                logger.error(
-                    "[DC %d] Initialization/Authorization failed: %s. Closing connection.",
-                    dc_id,
-                    exc,
-                )
+            except Exception:
                 session.state = DCState.FAILED
                 await session.close()
                 self._sessions.pop(dc_id, None)
@@ -567,8 +476,13 @@ class DCManager:
 
     async def _get_main_client_unlocked(self) -> DCClientSession:
         """
-        Internal helper to get main client.
+        Internal unlocked helper to obtain the main DC client.
         """
+        if self.session_storage:
+            session_data = await self.session_storage.load()
+            if session_data.dc_id and session_data.auth_key:
+                self.main_dc_id = session_data.dc_id
+
         main_client = self._sessions.get(self.main_dc_id)
         if main_client is not None and main_client.is_ready:
             return main_client
@@ -576,31 +490,52 @@ class DCManager:
 
     async def _create_handshaken_media_session(self, dc_id: int) -> DCClientSession:
         """
-        Build and connect a fresh session for target DC.
-        If main DC, shares the main AuthKey with a fresh session_id for zero-overhead pooling.
+        Build and connect a session for target Media DC.
+        Reuses the persistent AuthKey with a fresh ephemeral session_id (0 DH handshakes).
         """
-        if dc_id == self.main_dc_id:
-            main_client = await self._get_main_client_unlocked()
-            if main_client.auth_key:
-                session = DCClientSession(
-                    dc_id=dc_id,
-                    is_media=False,
-                    test_mode=self.test_mode,
-                    transport=self.transport_factory(),
-                    api_id=self.api_id,
-                )
-                try:
-                    await session.connect()
-                    session.auth_key = main_client.auth_key
-                    session.server_salt = main_client.server_salt
-                    session.session_id = generate_session_id()
-                    session.init_rpc(None)
-                    session.auth_verified = True
-                    return session
-                except Exception:
-                    await session.close()
-                    raise
+        auth_tuple: tuple[AuthKey, int] | None = None
+        session_data = None
+        if self.session_storage:
+            session_data = await self.session_storage.load()
+            auth_tuple = session_data.get_dc_auth(dc_id)
+        if not auth_tuple and dc_id in self._sessions:
+            sess = self._sessions[dc_id]
+            if sess.auth_key is not None:
+                auth_tuple = (sess.auth_key, sess.server_salt)
 
+        if auth_tuple:
+            stored_key, stored_salt = auth_tuple
+            session = DCClientSession(
+                dc_id=dc_id,
+                is_media=True,
+                test_mode=self.test_mode,
+                transport=self.transport_factory(),
+                api_id=self.api_id,
+            )
+            try:
+                await session.connect()
+                session.auth_key = stored_key
+                session.server_salt = stored_salt
+                session.session_id = generate_session_id()
+                session.init_rpc(None)
+                if dc_id == self.main_dc_id or (
+                    session_data and dc_id in session_data.auth_imported_dcs
+                ):
+                    session.auth_imported = True
+                    session.auth_verified = True
+                    session.state = DCState.READY
+                else:
+                    session.state = DCState.HANDSHAKEN
+                logger.debug(
+                    "[DC %d] Reused persistent auth session for media pooled worker",
+                    dc_id,
+                )
+                return session
+            except Exception:
+                await session.close()
+                raise
+
+        # If no AuthKey exists yet for this DC, perform 1 DH handshake and persist it for all other workers
         session = DCClientSession(
             dc_id=dc_id,
             is_media=True,
@@ -614,6 +549,16 @@ class DCManager:
             session.auth_key = auth_key
             session.server_salt = server_salt
             session.init_rpc(None)
+            if dc_id == self.main_dc_id:
+                session.auth_imported = True
+                session.auth_verified = True
+                session.state = DCState.READY
+            else:
+                session.state = DCState.HANDSHAKEN
+            if self.session_storage:
+                session_data = await self.session_storage.load()
+                session_data.set_dc_auth(dc_id, auth_key, server_salt)
+                await self.session_storage.save(session_data)
             return session
         except Exception:
             await session.close()
@@ -626,13 +571,21 @@ class DCManager:
         """
         if dc_id == self.main_dc_id:
             session.auth_verified = True
+            session.auth_imported = True
+            session.state = DCState.READY
+            session.start_keepalive()
+            return
+
+        if session.auth_imported:
             session.state = DCState.READY
             session.start_keepalive()
             return
 
         try:
-            main_client = await self._get_main_client_unlocked()
-            exported = await main_client.invoke(raw_funcs.auth.ExportAuthorization(dc_id=dc_id))
+            exported = await self.invoke(
+                raw_funcs.auth.ExportAuthorization(dc_id=dc_id),
+                target_dc_id=self.main_dc_id,
+            )
             auth_id = getattr(exported, "id", None)
             auth_bytes = getattr(exported, "bytes_data", getattr(exported, "bytes", None))
             if auth_id is None or auth_bytes is None:
@@ -645,6 +598,11 @@ class DCManager:
             session.auth_imported = True
             session.state = DCState.READY
             session.start_keepalive()
+
+            if self.session_storage:
+                session_data = await self.session_storage.load()
+                session_data.auth_imported_dcs.add(dc_id)
+                await self.session_storage.save(session_data)
         except Exception:
             await session.close()
             raise
@@ -700,17 +658,13 @@ class DCManager:
         async with dc_lock:
             session = self._sessions.pop(dc_id, None)
             if session:
-                logger.warning(
-                    "[DC %d] Invalidating cached DC client (auth_key_id=%016x)",
-                    dc_id,
-                    session.auth_key.key_id & 0xFFFFFFFFFFFFFFFF if session.auth_key else 0,
-                )
+                logger.warning("[DC %d] Invalidating cached DC client session", dc_id)
                 session.invalidate()
                 await session.close()
             if dc_id == self.main_dc_id and self.session_storage:
                 try:
                     await self.session_storage.invalidate_auth_key()
-                    logger.info("[DC %d] Persisted auth_key invalidated in session storage", dc_id)
+                    logger.info("[DC %d] Persisted auth session invalidated in session storage", dc_id)
                 except Exception as e:
                     logger.debug("Error invalidating stored auth_key: %s", e)
 

@@ -144,9 +144,10 @@ class auth:
         def write(self) -> bytes:
             return struct.pack("<I", self.ID) + write_long(self.id) + write_bytes(self.bytes_data)
 
-        def read_result(self, b: BinaryIO) -> Authorization:
-            read_uint(b)
-            return Authorization.read(b)
+        def read_result(self, b: BinaryIO) -> Any:
+            from aiogram.raw.all import read_tl_object
+
+            return read_tl_object(b)
 
     class LogOut(TLRequest[bool]):
         ID = 0x3E72BA14

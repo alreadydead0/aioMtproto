@@ -107,9 +107,9 @@ class TCPConnection:
 
         try:
             return await self.transport.read_packet(self.reader)
-        except (asyncio.IncompleteReadError, ConnectionResetError) as e:
+        except (asyncio.IncompleteReadError, ConnectionResetError, OSError, TimeoutError) as e:
             self._connected = False
-            logger.warning("Connection closed by server on DC %d: %s", self.dc.dc_id, e)
+            logger.debug("Connection closed by server on DC %d: %s", self.dc.dc_id, e)
             raise ConnectionError("Connection lost") from e
 
     async def close(self) -> None:
