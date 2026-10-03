@@ -187,3 +187,47 @@ def test_tl_authorization_deserialization() -> None:
     assert auth.user.id == 7597391690
     assert auth.user.first_name == "Terabox"
     assert auth.user.bot is True
+
+
+def test_tl_layer_229_independent_id_verification() -> None:
+    from aiogram.raw.functions import SendMessage
+    from aiogram.raw.types import InputFile, Message, User, UpdatesCombined
+
+    # Verify constructor/method IDs against official Layer 229 CRC32 expectations
+    assert User.ID == 0xB1B8CC83
+    assert Message.ID == 0x7600B9D3
+    assert SendMessage.ID == 0xFEF48F62
+    assert InputFile.ID == 0xF52FF27F
+    assert UpdatesCombined.ID == 0x725B04C3
+
+
+def test_tl_message_roundtrip_serialization() -> None:
+    from aiogram.raw.types import Message, PeerUser
+
+    msg = Message(
+        id=42,
+        peer_id=PeerUser(user_id=100200300),
+        message="Hello Layer 229!",
+        out=True,
+        date=1700000000,
+    )
+    serialized = msg.write()
+    parsed = read_tl_object(io.BytesIO(serialized))
+
+    assert isinstance(parsed, Message)
+    assert parsed.id == 42
+    assert parsed.out is True
+    assert parsed.message == "Hello Layer 229!"
+    assert parsed.peer_id.user_id == 100200300
+    assert parsed.date == 1700000000
+
+
+def test_tl_primitive_vector_read_result() -> None:
+    import struct
+    from aiogram.raw.functions import ContactsGetContactIds
+
+    req = ContactsGetContactIds()
+    # Vector<int> response payload: 0x1CB5C415 (vector) + count (3) + 101, 102, 103
+    payload = struct.pack("<IIIii", 0x1CB5C415, 3, 101, 102, 103)
+    res = req.read_result(io.BytesIO(payload))
+    assert res == [101, 102, 103]

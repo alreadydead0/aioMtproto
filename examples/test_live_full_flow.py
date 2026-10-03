@@ -7,8 +7,8 @@ Live Multi-DC MTProto Verification Script:
 
 import asyncio
 import logging
-import sys
 import os
+import sys
 
 from aiogram import Bot, raw
 from aiogram.mtproto.connection.dc_manager import DCState

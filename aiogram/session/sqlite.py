@@ -61,6 +61,7 @@ class SQLiteSession(BaseMTProtoSession):
 
     async def load(self) -> SessionData:
         async with self._lock:
+            self._init_db()
             with sqlite3.connect(self.filename) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -128,6 +129,7 @@ class SQLiteSession(BaseMTProtoSession):
 
     async def save(self, data: SessionData) -> None:
         async with self._lock:
+            self._init_db()
             with sqlite3.connect(self.filename) as conn:
                 auth_key_blob = data.auth_key.key if data.auth_key else None
                 conn.execute("DELETE FROM session")

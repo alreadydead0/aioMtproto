@@ -141,3 +141,24 @@ async def test_rpc_engine_gzip_rpc_result() -> None:
     res = fut.result()
     assert isinstance(res, UploadFile)
     assert res.bytes == b"GZIP_CHUNK_DATA"
+
+
+@pytest.mark.asyncio
+async def test_rpc_engine_reset_initialization() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+    from aiogram.mtproto.protocol.rpc import RPCEngine
+
+    conn = MagicMock()
+    conn.is_connected = True
+    conn.send = AsyncMock()
+    auth_key = AuthKey(os.urandom(256))
+    engine = RPCEngine(connection=conn, auth_key=auth_key, server_salt=100)
+
+    engine._initialized = True
+    assert engine._initialized is True
+
+    engine.reset_initialization()
+    assert engine._initialized is False
+
+    await engine.stop()
+    assert engine._initialized is False

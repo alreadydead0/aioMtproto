@@ -5,13 +5,12 @@ Live Test Bot using provided Telegram credentials.
 
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
-
-import os
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
