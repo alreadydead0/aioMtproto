@@ -117,7 +117,7 @@ def test_tl_new_session_created() -> None:
 
 
 def test_tl_pong_and_ping() -> None:
-    from aiogram.raw.core.tl_core_types import Ping, PingDelayDisconnect, Pong
+    from aiogram.raw.core.tl_core_types import PingDelayDisconnect
 
     pong = Pong(msg_id=123456789, ping_id=987654321)
     raw_bytes = pong.write()
@@ -170,6 +170,7 @@ def test_tl_unknown_constructor_diagnostics() -> None:
 
 def test_tl_authorization_deserialization() -> None:
     import struct
+
     from aiogram.raw.types import Authorization, User
 
     user = User(id=7597391690, first_name="Terabox", bot=True)
@@ -178,10 +179,7 @@ def test_tl_authorization_deserialization() -> None:
     # auth.authorization#2ea2c0d4 flags:2 (setup_password_required=True, otherwise_relogin_days=7), user
     auth_flags = 2
     relogin_days = 7
-    payload = (
-        struct.pack("<IIi", 0x2EA2C0D4, auth_flags, relogin_days)
-        + user_bytes
-    )
+    payload = struct.pack("<IIi", 0x2EA2C0D4, auth_flags, relogin_days) + user_bytes
 
     auth = read_tl_object(io.BytesIO(payload))
     assert isinstance(auth, Authorization)

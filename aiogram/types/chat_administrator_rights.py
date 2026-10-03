@@ -49,6 +49,8 @@ class ChatAdministratorRights(TelegramObject):
     """*Optional*. :code:`True`, if the administrator can manage direct messages of the channel and decline suggested posts; for channels only"""
     can_manage_tags: bool | None = None
     """*Optional*. :code:`True`, if the administrator can edit the tags of regular members; for groups and supergroups only. If omitted, defaults to the value of can_pin_messages"""
+    can_send_welcome_messages: bool | None = None
+    """*Optional*. :code:`True`, if the administrator is allowed to send welcome messages; for groups and supergroups only"""
 
     if TYPE_CHECKING:
         # DO NOT EDIT MANUALLY!!!
@@ -74,6 +76,7 @@ class ChatAdministratorRights(TelegramObject):
             can_manage_topics: bool | None = None,
             can_manage_direct_messages: bool | None = None,
             can_manage_tags: bool | None = None,
+            can_send_welcome_messages: bool | None = None,
             **__pydantic_kwargs: Any,
         ) -> None:
             # DO NOT EDIT MANUALLY!!!
@@ -98,5 +101,6 @@ class ChatAdministratorRights(TelegramObject):
                 can_manage_topics=can_manage_topics,
                 can_manage_direct_messages=can_manage_direct_messages,
                 can_manage_tags=can_manage_tags,
+                can_send_welcome_messages=can_send_welcome_messages,
                 **__pydantic_kwargs,
             )

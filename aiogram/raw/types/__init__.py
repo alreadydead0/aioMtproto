@@ -804,17 +804,92 @@ class SentCode(TLObject):
     ID = 0x5E002502
     QUALNAME = "auth.SentCode"
 
-    def __init__(self, phone_code_hash: str, timeout: int | None = None) -> None:
+    def __init__(
+        self,
+        phone_code_hash: str,
+        timeout: int | None = None,
+        phone_registered: bool = False,
+        code_type: str | None = None,
+    ) -> None:
         self.phone_code_hash = phone_code_hash
         self.timeout = timeout
+        self.phone_registered = phone_registered
+        self.code_type = code_type
 
     @classmethod
     def read(cls, b: BinaryIO) -> SentCode:
         flags = read_uint(b)
-        read_uint(b)  # type c_id
+        phone_registered = bool(flags & (1 << 0))
+        type_c_id = read_uint(b)
+        code_type = "app"
+
+        if type_c_id in (0x3DBB5986, 0xC0000810, 0x5353C57F):  # app, sms, call
+            read_int(b)  # length: int
+            code_type = (
+                "app"
+                if type_c_id == 0x3DBB5986
+                else ("sms" if type_c_id == 0xC0000810 else "call")
+            )
+        elif type_c_id == 0xAB03C6D9:  # flashCall
+            read_string(b)  # pattern
+            code_type = "flash_call"
+        elif type_c_id == 0x820064E3:  # missedCall
+            read_string(b)  # prefix
+            read_int(b)  # length
+            code_type = "missed_call"
+        elif type_c_id == 0xD9565C39:  # fragmentSms
+            read_string(b)  # url
+            read_int(b)  # length
+            code_type = "fragment_sms"
+        elif type_c_id == 0xF450F59B:  # emailCode
+            e_flags = read_uint(b)
+            read_string(b)  # email_pattern
+            read_int(b)  # length
+            if e_flags & (1 << 3):
+                read_int(b)
+            if e_flags & (1 << 4):
+                read_int(b)
+            code_type = "email"
+        elif type_c_id == 0xA5491EDE:  # setUpEmailRequired
+            read_uint(b)  # flags
+            code_type = "setup_email"
+        elif type_c_id in (0xA41E4C71, 0xB30C163B):  # smsWord, smsPhrase
+            s_flags = read_uint(b)
+            if type_c_id == 0xA41E4C71:
+                read_int(b)  # length
+            if s_flags & (1 << 0):
+                read_string(b)
+            code_type = "sms"
+        elif type_c_id == 0xE57B1432:  # firebaseSms
+            f_flags = read_uint(b)
+            if f_flags & (1 << 0):
+                read_bytes(b)  # nonce
+            if f_flags & (1 << 2):
+                read_bytes(b)  # play_integrity_nonce
+            if f_flags & (1 << 1):
+                read_int(b)  # push_timeout
+            read_int(b)  # length
+            code_type = "firebase"
+
         phone_code_hash = read_string(b)
+
+        if flags & (1 << 1):
+            read_uint(b)  # next_type: CodeType
         timeout = read_int(b) if (flags & (1 << 2)) else None
-        return SentCode(phone_code_hash=phone_code_hash, timeout=timeout)
+        if flags & (1 << 3):
+            # termsOfService
+            read_uint(b)
+            read_string(b)
+        if flags & (1 << 4):
+            # url
+            read_string(b)
+
+        return SentCode(
+            phone_code_hash=phone_code_hash,
+            timeout=timeout,
+            phone_registered=phone_registered,
+            code_type=code_type,
+        )
 
 
 class Authorization(TLObject):
@@ -1390,3 +1465,301 @@ class InputMediaUploadedDocument(InputMedia):
             force_file=bool(flags & (1 << 4)),
             spoiler=bool(flags & (1 << 5)),
         )
+
+
+class CodeSettings(TLObject):
+    ID = 0xAD253D78
+    QUALNAME = "types.CodeSettings"
+
+    def __init__(
+        self,
+        allow_flashcall: bool = False,
+        current_number: bool = False,
+        allow_app_hash: bool = False,
+        allow_missed_call: bool = False,
+        allow_firebase: bool = False,
+        unknown_number: bool = False,
+        logout_tokens: list[bytes] | None = None,
+        token: str | None = None,
+        app_sandbox: bool | None = None,
+    ) -> None:
+        self.allow_flashcall = allow_flashcall
+        self.current_number = current_number
+        self.allow_app_hash = allow_app_hash
+        self.allow_missed_call = allow_missed_call
+        self.allow_firebase = allow_firebase
+        self.unknown_number = unknown_number
+        self.logout_tokens = logout_tokens
+        self.token = token
+        self.app_sandbox = app_sandbox
+
+    def write(self) -> bytes:
+        flags = 0
+        if self.allow_flashcall:
+            flags |= 1 << 0
+        if self.current_number:
+            flags |= 1 << 1
+        if self.allow_app_hash:
+            flags |= 1 << 4
+        if self.allow_missed_call:
+            flags |= 1 << 5
+        if self.allow_firebase:
+            flags |= 1 << 7
+        if self.unknown_number:
+            flags |= 1 << 9
+        if self.logout_tokens is not None:
+            flags |= 1 << 6
+        if self.token is not None:
+            flags |= 1 << 8
+        if self.app_sandbox is not None:
+            flags |= 1 << 8
+
+        res = struct.pack("<II", self.ID, flags)
+        if self.logout_tokens is not None:
+            res += write_vector(self.logout_tokens, write_bytes)
+        if self.token is not None:
+            res += write_string(self.token)
+        if self.app_sandbox is not None:
+            res += write_bool(self.app_sandbox)
+        return res
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> CodeSettings:
+        flags = read_uint(b)
+        allow_flashcall = bool(flags & (1 << 0))
+        current_number = bool(flags & (1 << 1))
+        allow_app_hash = bool(flags & (1 << 4))
+        allow_missed_call = bool(flags & (1 << 5))
+        allow_firebase = bool(flags & (1 << 7))
+        unknown_number = bool(flags & (1 << 9))
+        logout_tokens = read_vector(b, read_bytes) if (flags & (1 << 6)) else None
+        token = read_string(b) if (flags & (1 << 8)) else None
+        app_sandbox = read_bool(b) if (flags & (1 << 8)) else None
+        return CodeSettings(
+            allow_flashcall=allow_flashcall,
+            current_number=current_number,
+            allow_app_hash=allow_app_hash,
+            allow_missed_call=allow_missed_call,
+            allow_firebase=allow_firebase,
+            unknown_number=unknown_number,
+            logout_tokens=logout_tokens,
+            token=token,
+            app_sandbox=app_sandbox,
+        )
+
+
+class PasswordKdfAlgo(TLObject):
+    ID = 0
+    QUALNAME = "types.PasswordKdfAlgo"
+
+
+class PasswordKdfAlgoUnknown(PasswordKdfAlgo):
+    ID = 0xD45AB096
+    QUALNAME = "types.PasswordKdfAlgoUnknown"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> PasswordKdfAlgoUnknown:
+        return PasswordKdfAlgoUnknown()
+
+
+class PasswordKdfAlgoSHA256SHA256PBKDF2HMACSHA512(PasswordKdfAlgo):
+    ID = 0x3A912D4A
+    QUALNAME = "types.PasswordKdfAlgoSHA256SHA256PBKDF2HMACSHA512"
+
+    def __init__(self, salt1: bytes, salt2: bytes, g: int, p: bytes) -> None:
+        self.salt1 = salt1
+        self.salt2 = salt2
+        self.g = g
+        self.p = p
+
+    def write(self) -> bytes:
+        return (
+            struct.pack("<I", self.ID)
+            + write_bytes(self.salt1)
+            + write_bytes(self.salt2)
+            + write_int(self.g)
+            + write_bytes(self.p)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> PasswordKdfAlgoSHA256SHA256PBKDF2HMACSHA512:
+        return PasswordKdfAlgoSHA256SHA256PBKDF2HMACSHA512(
+            salt1=read_bytes(b),
+            salt2=read_bytes(b),
+            g=read_int(b),
+            p=read_bytes(b),
+        )
+
+
+class SecurePasswordKdfAlgo(TLObject):
+    ID = 0
+    QUALNAME = "types.SecurePasswordKdfAlgo"
+
+
+class SecurePasswordKdfAlgoUnknown(SecurePasswordKdfAlgo):
+    ID = 0x004A8537
+    QUALNAME = "types.SecurePasswordKdfAlgoUnknown"
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> SecurePasswordKdfAlgoUnknown:
+        return SecurePasswordKdfAlgoUnknown()
+
+
+class SecurePasswordKdfAlgoPBKDF2HMACSHA512(SecurePasswordKdfAlgo):
+    ID = 0xBBF2DDA0
+    QUALNAME = "types.SecurePasswordKdfAlgoPBKDF2HMACSHA512"
+
+    def __init__(self, salt: bytes) -> None:
+        self.salt = salt
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID) + write_bytes(self.salt)
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> SecurePasswordKdfAlgoPBKDF2HMACSHA512:
+        return SecurePasswordKdfAlgoPBKDF2HMACSHA512(salt=read_bytes(b))
+
+
+class SecurePasswordKdfAlgoSHA512(SecurePasswordKdfAlgo):
+    ID = 0x86471D92
+    QUALNAME = "types.SecurePasswordKdfAlgoSHA512"
+
+    def __init__(self, salt: bytes) -> None:
+        self.salt = salt
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID) + write_bytes(self.salt)
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> SecurePasswordKdfAlgoSHA512:
+        return SecurePasswordKdfAlgoSHA512(salt=read_bytes(b))
+
+
+class AccountPassword(TLObject):
+    ID = 0x95D4E410
+    QUALNAME = "account.Password"
+
+    def __init__(
+        self,
+        has_recovery: bool = False,
+        has_secure_values: bool = False,
+        has_password: bool = False,
+        current_algo: PasswordKdfAlgo | None = None,
+        srp_B: bytes | None = None,
+        srp_id: int | None = None,
+        hint: str | None = None,
+        email_unconfirmed_pattern: str | None = None,
+        new_algo: PasswordKdfAlgo | None = None,
+        new_secure_algo: TLObject | None = None,
+        secure_random: bytes | None = None,
+        pending_reset_date: int | None = None,
+        login_email_pattern: str | None = None,
+    ) -> None:
+        self.has_recovery = has_recovery
+        self.has_secure_values = has_secure_values
+        self.has_password = has_password
+        self.current_algo = current_algo
+        self.srp_B = srp_B
+        self.srp_id = srp_id
+        self.hint = hint
+        self.email_unconfirmed_pattern = email_unconfirmed_pattern
+        self.new_algo = new_algo
+        self.new_secure_algo = new_secure_algo
+        self.secure_random = secure_random
+        self.pending_reset_date = pending_reset_date
+        self.login_email_pattern = login_email_pattern
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> AccountPassword:
+        from aiogram.raw.all import read_tl_object
+
+        flags = read_uint(b)
+        has_recovery = bool(flags & (1 << 0))
+        has_secure_values = bool(flags & (1 << 1))
+        has_password = bool(flags & (1 << 2))
+        current_algo = read_tl_object(b) if has_password else None
+        srp_B = read_bytes(b) if has_password else None
+        srp_id = read_long(b) if has_password else None
+        hint = read_string(b) if (flags & (1 << 3)) else None
+        email_unconfirmed_pattern = read_string(b) if (flags & (1 << 4)) else None
+        new_algo = read_tl_object(b)
+        new_secure_algo = read_tl_object(b)
+        secure_random = read_bytes(b)
+        pending_reset_date = read_int(b) if (flags & (1 << 5)) else None
+        login_email_pattern = read_string(b) if (flags & (1 << 6)) else None
+        return AccountPassword(
+            has_recovery=has_recovery,
+            has_secure_values=has_secure_values,
+            has_password=has_password,
+            current_algo=current_algo,
+            srp_B=srp_B,
+            srp_id=srp_id,
+            hint=hint,
+            email_unconfirmed_pattern=email_unconfirmed_pattern,
+            new_algo=new_algo,
+            new_secure_algo=new_secure_algo,
+            secure_random=secure_random,
+            pending_reset_date=pending_reset_date,
+            login_email_pattern=login_email_pattern,
+        )
+
+
+class InputCheckPasswordSRP(TLObject):
+    ID = 0xD27FF082
+    QUALNAME = "types.InputCheckPasswordSRP"
+
+    def __init__(self, srp_id: int, A: bytes, M1: bytes) -> None:
+        self.srp_id = srp_id
+        self.A = A
+        self.M1 = M1
+
+    def write(self) -> bytes:
+        return (
+            struct.pack("<I", self.ID)
+            + write_long(self.srp_id)
+            + write_bytes(self.A)
+            + write_bytes(self.M1)
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> InputCheckPasswordSRP:
+        return InputCheckPasswordSRP(srp_id=read_long(b), A=read_bytes(b), M1=read_bytes(b))
+
+
+class InputCheckPasswordEmpty(TLObject):
+    ID = 0x9880F658
+    QUALNAME = "types.InputCheckPasswordEmpty"
+
+    def write(self) -> bytes:
+        return struct.pack("<I", self.ID)
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> InputCheckPasswordEmpty:
+        return InputCheckPasswordEmpty()
+
+
+class ContactsResolvedPeer(TLObject):
+    ID = 0x7F077AD9
+    QUALNAME = "contacts.ResolvedPeer"
+
+    def __init__(self, peer: Peer, chats: list[TLObject], users: list[User]) -> None:
+        self.peer = peer
+        self.chats = chats
+        self.users = users
+
+    def write(self) -> bytes:
+        return (
+            struct.pack("<I", self.ID)
+            + self.peer.write()
+            + write_vector(self.chats, lambda c: c.write())
+            + write_vector(self.users, lambda u: u.write())
+        )
+
+    @classmethod
+    def read(cls, b: BinaryIO) -> ContactsResolvedPeer:
+        from aiogram.raw.all import read_tl_object
+
+        peer = read_tl_object(b)
+        chats = read_vector(b, read_tl_object)
+        users = read_vector(b, read_tl_object)
+        return ContactsResolvedPeer(peer=peer, chats=chats, users=users)

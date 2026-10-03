@@ -1,0 +1,1 @@
+Added dedicated high-level MTProto UserClient (userbot), Telegram user login with phone/code/2FA SRP password authentication, PeerResolver with in-memory caching and auto RPC resolution, userbot event dispatcher with composable filters, and native portable Base64 StringSession.

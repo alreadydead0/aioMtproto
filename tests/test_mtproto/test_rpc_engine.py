@@ -59,6 +59,7 @@ def test_encrypted_message_codec_and_containers() -> None:
 async def test_rpc_engine_pong_handling() -> None:
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
+
     from aiogram.mtproto.protocol.rpc import RPCEngine
     from aiogram.raw.core.tl_core_types import Ping, Pong
 
@@ -85,6 +86,7 @@ async def test_rpc_engine_pong_handling() -> None:
 @pytest.mark.asyncio
 async def test_rpc_engine_new_session_created() -> None:
     from unittest.mock import AsyncMock, MagicMock
+
     from aiogram.mtproto.protocol.rpc import RPCEngine
     from aiogram.raw.core.tl_core_types import NewSessionCreated
 
@@ -104,13 +106,13 @@ async def test_rpc_engine_new_session_created() -> None:
 @pytest.mark.asyncio
 async def test_rpc_engine_gzip_rpc_result() -> None:
     import asyncio
-    from unittest.mock import AsyncMock, MagicMock
     import struct
+    from unittest.mock import AsyncMock, MagicMock
+
     from aiogram.mtproto.protocol.rpc import RPCEngine
-    from aiogram.raw.core.tl_core_types import GzipPacked, RpcResult
-    from aiogram.raw.types import StorageFileUnknown, UploadFile
     from aiogram.raw import functions as raw_funcs
-    from aiogram.raw.types import InputDocumentFileLocation
+    from aiogram.raw.core.tl_core_types import GzipPacked, RpcResult
+    from aiogram.raw.types import InputDocumentFileLocation, StorageFileUnknown, UploadFile
 
     conn = MagicMock()
     conn.is_connected = True

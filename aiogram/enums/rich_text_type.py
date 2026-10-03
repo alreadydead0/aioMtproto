@@ -33,3 +33,4 @@ class RichTextType(str, Enum):
     ANCHOR_LINK = "anchor_link"
     REFERENCE = "reference"
     REFERENCE_LINK = "reference_link"
+    BUTTON = "button"

@@ -1,5 +1,6 @@
 # ruff: noqa: T201
 import asyncio
+import contextlib
 import os
 import sys
 import time
@@ -114,10 +115,8 @@ async def run() -> None:
     # Cleanup temp files
     for fname in ["temp_check_test_session.session", "temp_check_downloaded_file.bin"]:
         if os.path.exists(fname):
-            try:
+            with contextlib.suppress(Exception):
                 os.remove(fname)
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from .auth_key import AuthKey
 from .dh import check_dh_g, check_dh_params, compute_auth_key, factorize_pq, generate_dh_b
 from .kdf import compute_kdf, compute_msg_key
 from .rsa import TELEGRAM_RSA_KEYS, RSAKey, find_rsa_key, rsa_encrypt
+from .srp import compute_srp_password
 
 __all__ = (
     "AuthKey",
@@ -28,6 +29,7 @@ __all__ = (
     "compute_auth_key",
     "compute_kdf",
     "compute_msg_key",
+    "compute_srp_password",
     "factorize_pq",
     "find_rsa_key",
     "generate_dh_b",

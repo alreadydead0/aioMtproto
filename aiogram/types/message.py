@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from .checklist_tasks_added import ChecklistTasksAdded
     from .checklist_tasks_done import ChecklistTasksDone
     from .community_chat_added import CommunityChatAdded
+    from .community_chat_joined import CommunityChatJoined
     from .community_chat_removed import CommunityChatRemoved
     from .contact import Contact
     from .date_time_union import DateTimeUnion
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
     from .direct_message_price_changed import DirectMessagePriceChanged
     from .direct_messages_topic import DirectMessagesTopic
     from .document import Document
+    from .ephemeral_message_parameters import EphemeralMessageParameters
     from .external_reply_info import ExternalReplyInfo
     from .forum_topic_closed import ForumTopicClosed
     from .forum_topic_created import ForumTopicCreated
@@ -396,6 +398,8 @@ class Message(MaybeInaccessibleMessage):
     """*Optional*. Service message: chat added to a :class:`aiogram.types.community.Community`"""
     community_chat_removed: CommunityChatRemoved | None = None
     """*Optional*. Service message: chat removed from a :class:`aiogram.types.community.Community`"""
+    community_chat_joined: CommunityChatJoined | None = None
+    """*Optional*. Service message: chat joined from a :class:`aiogram.types.community.Community`"""
     forward_date: DateTime | None = Field(None, json_schema_extra={"deprecated": True})
     """*Optional*. For forwarded messages, date the original message was sent in Unix time
 
@@ -558,6 +562,7 @@ class Message(MaybeInaccessibleMessage):
             ephemeral_message_id: int | None = None,
             community_chat_added: CommunityChatAdded | None = None,
             community_chat_removed: CommunityChatRemoved | None = None,
+            community_chat_joined: CommunityChatJoined | None = None,
             forward_date: DateTime | None = None,
             forward_from: User | None = None,
             forward_from_chat: Chat | None = None,
@@ -691,6 +696,7 @@ class Message(MaybeInaccessibleMessage):
                 ephemeral_message_id=ephemeral_message_id,
                 community_chat_added=community_chat_added,
                 community_chat_removed=community_chat_removed,
+                community_chat_joined=community_chat_joined,
                 forward_date=forward_date,
                 forward_from=forward_from,
                 forward_from_chat=forward_from_chat,
@@ -859,6 +865,8 @@ class Message(MaybeInaccessibleMessage):
             return ContentType.COMMUNITY_CHAT_ADDED
         if self.community_chat_removed:
             return ContentType.COMMUNITY_CHAT_REMOVED
+        if self.community_chat_joined:
+            return ContentType.COMMUNITY_CHAT_JOINED
         return ContentType.UNKNOWN
 
     def _unparse_entities(self, text_decoration: TextDecoration) -> str:
@@ -896,6 +904,18 @@ class Message(MaybeInaccessibleMessage):
             quote_parse_mode=quote_parse_mode,
             quote_entities=quote_entities,
             quote_position=quote_position,
+        )
+
+    def as_ephemeral_message_parameters(
+        self,
+        *,
+        replace_callback_query_message: bool | None = None,
+    ) -> EphemeralMessageParameters:
+        from .ephemeral_message_parameters import EphemeralMessageParameters
+
+        return EphemeralMessageParameters(
+            receiver_user_id=self.from_user.id if self.from_user else None,
+            replace_callback_query_message=replace_callback_query_message,
         )
 
     def reply_animation(

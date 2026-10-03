@@ -540,27 +540,6 @@ def test_14_unknown_dc_id_raises_value_error() -> None:
 
 @pytest.mark.asyncio
 async def test_a_stored_valid_auth_key_validation_succeeds() -> None:
-    """Test A: Stored valid AuthKey -> validation succeeds -> no unnecessary ImportBotAuthorization -> READY."""
-    storage = MemorySession()
-    stored_key = create_fake_auth_key()
-    session_data = await storage.load()
-    session_data.auth_key = stored_key
-    session_data.server_salt = 123456
-    session_data.dc_id = 2
-    await storage.save(session_data)
-
-    manager = DCManager(
-        api_id=12345,
-        api_hash="mock_hash",
-        main_dc_id=2,
-        bot_token="123:ABC",
-        transport_factory=MockTransport,
-        session_storage=storage,
-    )
-
-
-@pytest.mark.asyncio
-async def test_a_stored_valid_auth_key_validation_succeeds() -> None:
     """Test A: Stored valid AuthKey -> zero preemptive validation RPCs -> restored directly to READY."""
     storage = MemorySession()
     stored_key = create_fake_auth_key()

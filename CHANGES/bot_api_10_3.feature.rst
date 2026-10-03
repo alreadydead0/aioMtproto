@@ -1,0 +1,14 @@
+Added full support for **Telegram Bot API 10.3**:
+
+- Added new types: :class:`aiogram.types.disabled_button.DisabledButton`, :class:`aiogram.types.rich_message_button.RichMessageButton`, :class:`aiogram.types.rich_text_button.RichTextButton`, :class:`aiogram.types.rich_block_buttons.RichBlockButtons`, :class:`aiogram.types.input_rich_block_buttons.InputRichBlockButtons`, :class:`aiogram.types.rich_block_document.RichBlockDocument`, :class:`aiogram.types.input_rich_block_document.InputRichBlockDocument`, :class:`aiogram.types.rich_block_expandable_block_quotation.RichBlockExpandableBlockQuotation`, :class:`aiogram.types.input_rich_block_expandable_block_quotation.InputRichBlockExpandableBlockQuotation`, :class:`aiogram.types.ephemeral_message_parameters.EphemeralMessageParameters`, :class:`aiogram.types.message_generation_stopped.MessageGenerationStopped`, :class:`aiogram.types.community_chat_joined.CommunityChatJoined`.
+- Added new enums: :code:`ButtonStyle.LINK`, :code:`RichBlockType.EXPANDABLE_BLOCKQUOTE`, :code:`RichBlockType.DOCUMENT`, :code:`RichBlockType.BUTTONS`, :code:`InputRichBlockType.EXPANDABLE_BLOCKQUOTE`, :code:`InputRichBlockType.DOCUMENT`, :code:`InputRichBlockType.BUTTONS`, :code:`RichTextType.BUTTON`, :code:`UpdateType.STOPPED_MESSAGE_GENERATION`, :code:`ContentType.COMMUNITY_CHAT_JOINED`.
+- Added :code:`stopped_message_generation` update handler to Dispatcher and Router.
+- Added :code:`ephemeral_message_parameters` to all 14 message sending methods and Bot shortcuts.
+- Added :code:`can_send_welcome_messages` to :class:`aiogram.types.chat_administrator_rights.ChatAdministratorRights`, :class:`aiogram.types.chat_member_administrator.ChatMemberAdministrator`, and :class:`aiogram.methods.promote_chat_member.PromoteChatMember`.
+- Added :code:`can_stop` and :code:`keep_on_stop` to :class:`aiogram.methods.send_message_draft.SendMessageDraft` and :class:`aiogram.methods.send_rich_message_draft.SendRichMessageDraft`.
+- Added :code:`rich_message` to :class:`aiogram.methods.edit_ephemeral_message_text.EditEphemeralMessageText` and :code:`show_caption_above_media` to :class:`aiogram.methods.edit_ephemeral_message_caption.EditEphemeralMessageCaption`.
+- Added :code:`disabled` to :class:`aiogram.types.inline_keyboard_button.InlineKeyboardButton`.
+- Added :code:`force_reply` to :class:`aiogram.types.inline_keyboard_markup.InlineKeyboardMarkup` and :class:`aiogram.types.reply_keyboard_markup.ReplyKeyboardMarkup`.
+- Added :code:`is_compact` to :class:`aiogram.types.rich_block_table.RichBlockTable` and :class:`aiogram.types.input_rich_block_table.InputRichBlockTable`.
+- Added :code:`text`, :code:`entities`, and :code:`is_private` to :class:`aiogram.types.unique_gift_info.UniqueGiftInfo`.
+- Maintained seamless MTProto transport integration and fallback for Bot download methods.

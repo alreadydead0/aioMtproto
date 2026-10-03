@@ -375,7 +375,9 @@ class RPCEngine:
             read_uint(b_io)  # consume BadServerSalt.ID
             bad_salt = BadServerSalt.read(b_io)
             self.server_salt = bad_salt.new_server_salt
-            logger.debug("Received BadServerSalt: updated server salt and resending pending requests")
+            logger.debug(
+                "Received BadServerSalt: updated server salt and resending pending requests"
+            )
             req_entry = self._pending_requests.pop(bad_salt.bad_msg_id, None)
             if req_entry:
                 fut, original_req = req_entry
@@ -405,7 +407,9 @@ class RPCEngine:
                         asyncio.create_task(self._resend_pending_request(fut, original_req))
                     else:
                         fut.set_exception(
-                            RPCError(bad_msg.error_code, f"BadMsgNotification {bad_msg.error_code}")
+                            RPCError(
+                                bad_msg.error_code, f"BadMsgNotification {bad_msg.error_code}"
+                            )
                         )
             return
 

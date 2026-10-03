@@ -23,6 +23,7 @@ class SessionData:
     is_bot: bool = False
     phone: str | None = None
     is_test: bool = False
+    api_id: int | None = None
     # Multi-DC mapping: dc_id -> (AuthKey, server_salt)
     dc_auth_keys: dict[int, tuple[AuthKey, int]] = field(default_factory=dict)
     # Set of DC IDs where media authorization has been successfully exported/imported

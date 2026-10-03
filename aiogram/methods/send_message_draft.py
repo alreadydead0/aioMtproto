@@ -29,6 +29,10 @@ class SendMessageDraft(TelegramMethod[bool]):
     """Mode for parsing entities in the message text. See `formatting options <https://core.telegram.org/bots/api#formatting-options>`_ for more details"""
     entities: list[MessageEntity] | None = None
     """A JSON-serialized list of special entities that appear in message text, which can be specified instead of *parse_mode*"""
+    can_stop: bool | None = None
+    """*Optional*. Pass :code:`True` if the user can stop the generation of the message draft"""
+    keep_on_stop: bool | None = None
+    """*Optional*. Pass :code:`True` if the message draft must not be hidden when the user stops the generation"""
 
     if TYPE_CHECKING:
         # DO NOT EDIT MANUALLY!!!
@@ -43,6 +47,8 @@ class SendMessageDraft(TelegramMethod[bool]):
             text: str | None = None,
             parse_mode: str | Default | None = Default("parse_mode"),
             entities: list[MessageEntity] | None = None,
+            can_stop: bool | None = None,
+            keep_on_stop: bool | None = None,
             **__pydantic_kwargs: Any,
         ) -> None:
             # DO NOT EDIT MANUALLY!!!
@@ -56,5 +62,7 @@ class SendMessageDraft(TelegramMethod[bool]):
                 text=text,
                 parse_mode=parse_mode,
                 entities=entities,
+                can_stop=can_stop,
+                keep_on_stop=keep_on_stop,
                 **__pydantic_kwargs,
             )

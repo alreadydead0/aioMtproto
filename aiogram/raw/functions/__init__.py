@@ -4,8 +4,9 @@ Official Telegram TL RPC Functions for MTProto.
 
 from __future__ import annotations
 
+import random
 import struct
-from typing import Any, BinaryIO, List, Optional
+from typing import Any, BinaryIO, Optional
 
 from aiogram.raw.core.primitives import (
     TLObject,
@@ -25,7 +26,11 @@ from aiogram.raw.core.primitives import (
     write_vector,
 )
 from aiogram.raw.types import (
+    AccountPassword,
     Authorization,
+    CodeSettings,
+    ContactsResolvedPeer,
+    InputCheckPasswordSRP,
     InputPeer,
     Message,
     NearestDc,
@@ -53,44 +58,160 @@ class auth:
         ID = 0xA677244F
         QUALNAME = "functions.auth.SendCode"
 
-        def __init__(self, phone_number: str, api_id: int, api_hash: str) -> None:
+        def __init__(
+            self,
+            phone_number: str,
+            api_id: int,
+            api_hash: str,
+            settings: CodeSettings | None = None,
+        ) -> None:
             self.phone_number = phone_number
             self.api_id = api_id
             self.api_hash = api_hash
+            self.settings = settings or CodeSettings()
 
         def write(self) -> bytes:
-            # flags = 0
-            # settings = CodeSettings (flags=0)
-            code_settings = struct.pack("<II", 0xAD253618, 0)
             return (
                 struct.pack("<I", self.ID)
                 + write_string(self.phone_number)
                 + write_int(self.api_id)
                 + write_string(self.api_hash)
-                + code_settings
+                + self.settings.write()
             )
 
         def read_result(self, b: BinaryIO) -> SentCode:
             read_uint(b)
             return SentCode.read(b)
 
+    class ResendCode(TLRequest[SentCode]):
+        ID = 0x3EF1A81C
+        QUALNAME = "functions.auth.ResendCode"
+
+        def __init__(
+            self,
+            phone_number: str,
+            phone_code_hash: str,
+            reason: str | None = None,
+        ) -> None:
+            self.phone_number = phone_number
+            self.phone_code_hash = phone_code_hash
+            self.reason = reason
+
+        def write(self) -> bytes:
+            flags = 0
+            if self.reason:
+                flags |= 1 << 0
+            res = (
+                struct.pack("<II", self.ID, flags)
+                + write_string(self.phone_number)
+                + write_string(self.phone_code_hash)
+            )
+            if self.reason:
+                res += write_string(self.reason)
+            return res
+
+        def read_result(self, b: BinaryIO) -> SentCode:
+            read_uint(b)
+            return SentCode.read(b)
+
+    class CancelCode(TLRequest[bool]):
+        ID = 0x1F04045B
+        QUALNAME = "functions.auth.CancelCode"
+
+        def __init__(self, phone_number: str, phone_code_hash: str) -> None:
+            self.phone_number = phone_number
+            self.phone_code_hash = phone_code_hash
+
+        def write(self) -> bytes:
+            return (
+                struct.pack("<I", self.ID)
+                + write_string(self.phone_number)
+                + write_string(self.phone_code_hash)
+            )
+
+        def read_result(self, b: BinaryIO) -> bool:
+            return True
+
     class SignIn(TLRequest[Authorization]):
-        ID = 0x8D52A951
+        ID = 0xBCD51581
         QUALNAME = "functions.auth.SignIn"
 
-        def __init__(self, phone_number: str, phone_code_hash: str, phone_code: str) -> None:
+        def __init__(
+            self,
+            phone_number: str,
+            phone_code_hash: str,
+            phone_code: str | None = None,
+            email_verification: TLObject | None = None,
+        ) -> None:
             self.phone_number = phone_number
             self.phone_code_hash = phone_code_hash
             self.phone_code = phone_code
+            self.email_verification = email_verification
 
         def write(self) -> bytes:
-            # flags (int) = 0
+            if self.email_verification is not None:
+                flags = 1 << 1
+                if self.phone_code is not None:
+                    flags |= 1 << 0
+                res = (
+                    struct.pack("<II", 0x8D52A951, flags)
+                    + write_string(self.phone_number)
+                    + write_string(self.phone_code_hash)
+                )
+                if self.phone_code is not None:
+                    res += write_string(self.phone_code)
+                res += self.email_verification.write()
+                return res
+
             return (
-                struct.pack("<II", self.ID, 0)
+                struct.pack("<I", 0xBCD51581)
                 + write_string(self.phone_number)
                 + write_string(self.phone_code_hash)
-                + write_string(self.phone_code)
+                + write_string(self.phone_code or "")
             )
+
+        def read_result(self, b: BinaryIO) -> Authorization:
+            read_uint(b)
+            return Authorization.read(b)
+
+    class SignUp(TLRequest[Authorization]):
+        ID = 0x80EEE427
+        QUALNAME = "functions.auth.SignUp"
+
+        def __init__(
+            self,
+            phone_number: str,
+            phone_code_hash: str,
+            first_name: str,
+            last_name: str = "",
+        ) -> None:
+            self.phone_number = phone_number
+            self.phone_code_hash = phone_code_hash
+            self.first_name = first_name
+            self.last_name = last_name
+
+        def write(self) -> bytes:
+            return (
+                struct.pack("<I", self.ID)
+                + write_string(self.phone_number)
+                + write_string(self.phone_code_hash)
+                + write_string(self.first_name)
+                + write_string(self.last_name)
+            )
+
+        def read_result(self, b: BinaryIO) -> Authorization:
+            read_uint(b)
+            return Authorization.read(b)
+
+    class CheckPassword(TLRequest[Authorization]):
+        ID = 0xD18B4D16
+        QUALNAME = "functions.auth.CheckPassword"
+
+        def __init__(self, password: InputCheckPasswordSRP) -> None:
+            self.password = password
+
+        def write(self) -> bytes:
+            return struct.pack("<I", self.ID) + self.password.write()
 
         def read_result(self, b: BinaryIO) -> Authorization:
             read_uint(b)
@@ -158,6 +279,36 @@ class auth:
 
         def read_result(self, b: BinaryIO) -> bool:
             return True
+
+
+class account:
+    class GetPassword(TLRequest[AccountPassword]):
+        ID = 0x548A30F5
+        QUALNAME = "functions.account.GetPassword"
+
+        def write(self) -> bytes:
+            return struct.pack("<I", self.ID)
+
+        def read_result(self, b: BinaryIO) -> AccountPassword:
+            read_uint(b)
+            return AccountPassword.read(b)
+
+
+class contacts:
+    class ResolveUsername(TLRequest[ContactsResolvedPeer]):
+        ID = 0xF93CCBA3
+        QUALNAME = "functions.contacts.ResolveUsername"
+
+        def __init__(self, username: str) -> None:
+            self.username = username
+
+        def write(self) -> bytes:
+            # flags = 0
+            return struct.pack("<II", self.ID, 0) + write_string(self.username)
+
+        def read_result(self, b: BinaryIO) -> ContactsResolvedPeer:
+            read_uint(b)
+            return ContactsResolvedPeer.read(b)
 
 
 class users:
@@ -319,6 +470,57 @@ class messages:
         def write(self) -> bytes:
             flags = 1 if self.revoke else 0
             return struct.pack("<II", self.ID, flags) + write_vector(self.id, write_int)
+
+        def read_result(self, b: BinaryIO) -> Any:
+            from aiogram.raw.all import read_tl_object
+
+            return read_tl_object(b)
+
+    class ForwardMessages(TLRequest[Updates]):
+        ID = 0xD5039208
+        QUALNAME = "functions.messages.ForwardMessages"
+
+        def __init__(
+            self,
+            from_peer: InputPeer,
+            to_peer: InputPeer,
+            id: list[int],
+            random_id: list[int] | None = None,
+            silent: bool = False,
+            background: bool = False,
+            with_my_score: bool = False,
+            drop_author: bool = False,
+            drop_media_captions: bool = False,
+        ) -> None:
+            self.from_peer = from_peer
+            self.to_peer = to_peer
+            self.id = id
+            self.random_id = random_id or [random.getrandbits(63) for _ in id]
+            self.silent = silent
+            self.background = background
+            self.with_my_score = with_my_score
+            self.drop_author = drop_author
+            self.drop_media_captions = drop_media_captions
+
+        def write(self) -> bytes:
+            flags = 0
+            if self.silent:
+                flags |= 1 << 5
+            if self.background:
+                flags |= 1 << 6
+            if self.with_my_score:
+                flags |= 1 << 8
+            if self.drop_author:
+                flags |= 1 << 11
+            if self.drop_media_captions:
+                flags |= 1 << 12
+            return (
+                struct.pack("<II", self.ID, flags)
+                + self.from_peer.write()
+                + write_vector(self.id, write_int)
+                + write_vector(self.random_id, write_long)
+                + self.to_peer.write()
+            )
 
         def read_result(self, b: BinaryIO) -> Any:
             from aiogram.raw.all import read_tl_object

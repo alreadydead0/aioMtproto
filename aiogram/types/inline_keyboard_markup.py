@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from .base import MutableTelegramObject
 
 if TYPE_CHECKING:
+    from .force_reply import ForceReply
     from .inline_keyboard_button import InlineKeyboardButton
 
 
@@ -17,6 +18,8 @@ class InlineKeyboardMarkup(MutableTelegramObject):
 
     inline_keyboard: list[list[InlineKeyboardButton]]
     """Array of button rows, each represented by an Array of :class:`aiogram.types.inline_keyboard_button.InlineKeyboardButton` objects"""
+    force_reply: ForceReply | None = None
+    """*Optional*. Instructions to force a reply from the user"""
 
     if TYPE_CHECKING:
         # DO NOT EDIT MANUALLY!!!
@@ -26,10 +29,15 @@ class InlineKeyboardMarkup(MutableTelegramObject):
             __pydantic__self__,
             *,
             inline_keyboard: list[list[InlineKeyboardButton]],
+            force_reply: ForceReply | None = None,
             **__pydantic_kwargs: Any,
         ) -> None:
             # DO NOT EDIT MANUALLY!!!
             # This method was auto-generated via `butcher`
             # Is needed only for type checking and IDE support without any additional plugins
 
-            super().__init__(inline_keyboard=inline_keyboard, **__pydantic_kwargs)
+            super().__init__(
+                inline_keyboard=inline_keyboard,
+                force_reply=force_reply,
+                **__pydantic_kwargs,
+            )

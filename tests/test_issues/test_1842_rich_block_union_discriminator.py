@@ -67,6 +67,23 @@ class TestRichBlockUnionIsDiscriminated:
         assert isinstance(node, RichBlockParagraph)
         assert node.text == "leaf"
 
+    def test_new_rich_blocks_resolve_by_type(self):
+        msg = RichMessage.model_validate(
+            {
+                "blocks": [
+                    {
+                        "type": "expandable_blockquote",
+                        "blocks": [{"type": "paragraph", "text": "exp"}],
+                    },
+                    {"type": "document", "document": {"file_id": "f", "file_unique_id": "fu"}},
+                    {"type": "buttons", "buttons": [{"text": "btn", "url": "https://t.me"}]},
+                ]
+            }
+        )
+        assert type(msg.blocks[0]).__name__ == "RichBlockExpandableBlockQuotation"
+        assert type(msg.blocks[1]).__name__ == "RichBlockDocument"
+        assert type(msg.blocks[2]).__name__ == "RichBlockButtons"
+
 
 @pytest.mark.skipif(
     not hasattr(signal, "SIGALRM"),
@@ -119,6 +136,23 @@ class TestInputRichBlockUnionIsDiscriminated:
             node = node.blocks[0]
         assert isinstance(node, InputRichBlockParagraph)
         assert node.text == "leaf"
+
+    def test_new_input_rich_blocks_resolve_by_type(self):
+        msg = InputRichMessage.model_validate(
+            {
+                "blocks": [
+                    {
+                        "type": "expandable_blockquote",
+                        "blocks": [{"type": "paragraph", "text": "exp"}],
+                    },
+                    {"type": "document", "document": {"media": "f"}},
+                    {"type": "buttons", "buttons": [{"text": "btn", "url": "https://t.me"}]},
+                ]
+            }
+        )
+        assert type(msg.blocks[0]).__name__ == "InputRichBlockExpandableBlockQuotation"
+        assert type(msg.blocks[1]).__name__ == "InputRichBlockDocument"
+        assert type(msg.blocks[2]).__name__ == "InputRichBlockButtons"
 
 
 @pytest.mark.skipif(

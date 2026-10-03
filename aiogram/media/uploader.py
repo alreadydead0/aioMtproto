@@ -117,7 +117,9 @@ class FileUploader:
 
         if file_size > max_allowed:
             is_prem = getattr(self.client, "is_premium", False)
-            account_desc = "Telegram Premium User session" if not is_prem else "Telegram's 4GB ceiling"
+            account_desc = (
+                "Telegram Premium User session" if not is_prem else "Telegram's 4GB ceiling"
+            )
             msg = (
                 f"File size {file_size / (1024 * 1024):.2f}MB exceeds maximum permitted limit "
                 f"({max_allowed / (1024 * 1024):.0f}MB). Uploading files >2GB requires a {account_desc}."

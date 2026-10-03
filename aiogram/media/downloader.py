@@ -317,7 +317,12 @@ class FileDownloader:
                         except Exception as e:
                             attempt += 1
                             if attempt >= self.max_retries:
-                                logger.error("Chunk offset %d failed after %d attempts: %s", offset, attempt, e)
+                                logger.error(
+                                    "Chunk offset %d failed after %d attempts: %s",
+                                    offset,
+                                    attempt,
+                                    e,
+                                )
                                 raise
                             await asyncio.sleep(0.05)
 

@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from ..client.default import Default
 from ..types import (
     ChatIdUnion,
+    EphemeralMessageParameters,
     InputFileUnion,
     Message,
     MessageEntity,
@@ -59,6 +60,8 @@ class SendLivePhoto(TelegramMethod[Message]):
     """Description of the message to reply to"""
     reply_markup: ReplyMarkupUnion | None = None
     """Additional interface options. A JSON-serialized object for an `inline keyboard <https://core.telegram.org/bots/features#inline-keyboards>`_, `custom reply keyboard <https://core.telegram.org/bots/features#keyboards>`_, instructions to remove a reply keyboard or to force a reply from the user"""
+    ephemeral_message_parameters: EphemeralMessageParameters | None = None
+    """Parameters of the ephemeral message"""
     receiver_user_id: int | None = None
     """For outgoing ephemeral messages, unique identifier of the user who will receive the message; for group and supergroup chats only. It is not guaranteed that the user will receive the message, especially if they are offline. See `ephemeral message sending <https://core.telegram.org/bots/api#ephemeral-messages-and-commands>`_ for more details"""
     callback_query_id: str | None = None
@@ -89,6 +92,7 @@ class SendLivePhoto(TelegramMethod[Message]):
             suggested_post_parameters: SuggestedPostParameters | None = None,
             reply_parameters: ReplyParameters | None = None,
             reply_markup: ReplyMarkupUnion | None = None,
+            ephemeral_message_parameters: EphemeralMessageParameters | None = None,
             receiver_user_id: int | None = None,
             callback_query_id: str | None = None,
             **__pydantic_kwargs: Any,
@@ -116,6 +120,7 @@ class SendLivePhoto(TelegramMethod[Message]):
                 suggested_post_parameters=suggested_post_parameters,
                 reply_parameters=reply_parameters,
                 reply_markup=reply_markup,
+                ephemeral_message_parameters=ephemeral_message_parameters,
                 receiver_user_id=receiver_user_id,
                 callback_query_id=callback_query_id,
                 **__pydantic_kwargs,

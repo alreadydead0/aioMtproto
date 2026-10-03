@@ -28,3 +28,6 @@ multi_parse:
     - RichBlockVideo
     - RichBlockVoiceNote
     - RichBlockThinking
+    - RichBlockButtons
+    - RichBlockDocument
+    - RichBlockExpandableBlockQuotation

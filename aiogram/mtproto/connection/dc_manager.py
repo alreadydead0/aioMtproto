@@ -379,21 +379,19 @@ class DCManager:
                         )
                         self._sessions[dc_id] = session
                         return session
-                    else:
-                        if session_data and dc_id in session_data.auth_imported_dcs:
-                            session.auth_imported = True
-                            session.state = DCState.READY
-                            session.start_keepalive()
-                            logger.info(
-                                "[DC %d] Restored Media DC session -> READY",
-                                dc_id,
-                            )
-                            self._sessions[dc_id] = session
-                            return session
-                        else:
-                            await self._import_media_auth(session, dc_id)
-                            self._sessions[dc_id] = session
-                            return session
+                    if session_data and dc_id in session_data.auth_imported_dcs:
+                        session.auth_imported = True
+                        session.state = DCState.READY
+                        session.start_keepalive()
+                        logger.info(
+                            "[DC %d] Restored Media DC session -> READY",
+                            dc_id,
+                        )
+                        self._sessions[dc_id] = session
+                        return session
+                    await self._import_media_auth(session, dc_id)
+                    self._sessions[dc_id] = session
+                    return session
 
                 # Perform fresh DH Handshake if no valid persisted key exists
                 logger.info("[DC %d] Performing MTProto DH handshake...", dc_id)
@@ -664,7 +662,9 @@ class DCManager:
             if dc_id == self.main_dc_id and self.session_storage:
                 try:
                     await self.session_storage.invalidate_auth_key()
-                    logger.info("[DC %d] Persisted auth session invalidated in session storage", dc_id)
+                    logger.info(
+                        "[DC %d] Persisted auth session invalidated in session storage", dc_id
+                    )
                 except Exception as e:
                     logger.debug("Error invalidating stored auth_key: %s", e)
 

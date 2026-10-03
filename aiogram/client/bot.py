@@ -14,6 +14,7 @@ from typing import (
 
 from aiogram.utils.token import extract_bot_id, validate_token
 
+from ..exceptions import TelegramBadRequest
 from ..methods import (
     AddStickerToSet,
     AnswerCallbackQuery,
@@ -218,6 +219,7 @@ from ..types import (
     ChatPermissions,
     DateTimeUnion,
     Downloadable,
+    EphemeralMessageParameters,
     File,
     ForumTopic,
     GameHighScore,
@@ -495,52 +497,126 @@ class Bot:
             self._me = await self.get_me()
         return self._me
 
+    async def download_file(
+        self,
+        file_path: str,
+        destination: BinaryIO | pathlib.Path | str | None = None,
+        timeout: int | None = 30,
+        chunk_size: int = 65536,
+        seek: bool = True,
+    ) -> BinaryIO | pathlib.Path | str | None:
+        """
+        Download file by file_path to destination.
+
+        :param file_path: File path on Telegram server (via getFile)
+        :param destination: filename, file path or instance of :class:`io.IOBase`
+        :param timeout: int
+        :param chunk_size: int
+        :param seek: bool - automatically seek to the beginning of the file after writing
+        :return: if destination is None, return :class:`io.BytesIO`, otherwise return destination
+        """
+        if self.session.api.is_local:
+            import aiofiles
+            import aiofiles.os  # type: ignore[import-untyped]
+
+            dest = io.BytesIO() if destination is None else destination
+            if isinstance(dest, (str, pathlib.Path)):
+                async with aiofiles.open(dest, "wb") as f:
+                    async with aiofiles.open(file_path, "rb") as source:
+                        while chunk := await source.read(chunk_size):
+                            await f.write(chunk)
+                return dest
+            if isinstance(dest, io.IOBase):
+                async with aiofiles.open(file_path, "rb") as source:
+                    while chunk := await source.read(chunk_size):
+                        dest.write(chunk)
+                if seek:
+                    dest.seek(0)
+                return dest
+            raise TypeError(f"Unsupported destination type: {type(destination)}")
+
+        url = self.session.api.file_url(self.token, file_path)
+        dest = io.BytesIO() if destination is None else destination
+        if isinstance(dest, (str, pathlib.Path)):
+            import aiofiles
+
+            async with aiofiles.open(dest, "wb") as f:
+                async for chunk in self.session.stream_content(
+                    url, timeout=timeout or 30, chunk_size=chunk_size
+                ):
+                    await f.write(chunk)
+            return dest
+        if isinstance(dest, io.IOBase):
+            async for chunk in self.session.stream_content(
+                url, timeout=timeout or 30, chunk_size=chunk_size
+            ):
+                dest.write(chunk)
+            if seek:
+                dest.seek(0)
+            return dest
+        raise TypeError(f"Unsupported destination type: {type(destination)}")
+
     async def download(
         self,
         file: str | Downloadable,
         destination: BinaryIO | pathlib.Path | str | None = None,
+        timeout: int | None = 30,
+        chunk_size: int = 65536,
+        seek: bool = True,
+        make_dirs: bool = True,
         progress: Any = None,
         workers: int = 8,
         **kwargs: Any,
-    ) -> BinaryIO | str | bytes | None:
+    ) -> BinaryIO | pathlib.Path | str | bytes | None:
         """
-        Download file exclusively via high-speed MTProto engine (Up to 2GB-4GB).
+        Download file by file_id or Downloadable object.
+        If MTProto client is available (self.mtproto is not None), uses MTProto high-speed parallel downloader.
+        Otherwise, falls back to standard Telegram Bot API download.
 
         :param file: file_id or Downloadable object.
         :param destination: Filename, file path or instance of BinaryIO.
-        :param progress: Progress callback.
-        :param workers: Number of parallel workers.
+        :param timeout: int (for Bot API download)
+        :param chunk_size: int (for Bot API download)
+        :param seek: bool (for Bot API download)
+        :param make_dirs: bool (for Bot API download)
+        :param progress: Progress callback (for MTProto).
+        :param workers: Number of parallel workers (for MTProto).
         """
-        if self.mtproto is None:
-            msg = "MTProto client is required for downloading files."
-            raise RuntimeError(msg)
+        if self.mtproto is not None:
+            file_size = getattr(file, "file_size", None)
+            res = await self.mtproto.download_file(
+                location=file,
+                file_size=file_size,
+                destination=destination,
+                progress=progress or getattr(self, "_default_download_progress", None),
+                workers=workers,
+            )
+            return cast(BinaryIO | str | bytes | None, res)
 
-        file_size = getattr(file, "file_size", None)
-        res = await self.mtproto.download_file(
-            location=file,
-            file_size=file_size,
-            destination=destination,
-            progress=progress or getattr(self, "_default_download_progress", None),
-            workers=workers,
-        )
-        return cast(BinaryIO | str | bytes | None, res)
+        if isinstance(file, str):
+            file_id = file
+        elif isinstance(file, Downloadable):
+            file_id = file.file_id
+        else:
+            raise TypeError(f"file should be 'str' or 'Downloadable', not '{type(file).__name__}'")
 
-    async def download_file(
-        self,
-        file: str | Downloadable,
-        destination: BinaryIO | pathlib.Path | str | None = None,
-        progress: Any = None,
-        workers: int = 8,
-        **kwargs: Any,
-    ) -> BinaryIO | str | bytes | None:
-        """
-        Download file via MTProto engine (Alias to download).
-        """
-        return await self.download(
-            file=file,
+        file_path: str | None
+        if isinstance(file, File) and file.file_path:
+            file_path = file.file_path
+        else:
+            file_obj = await self.get_file(file_id)
+            file_path = file_obj.file_path
+
+        if make_dirs and isinstance(destination, (str, pathlib.Path)):
+            destination = pathlib.Path(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+        return await self.download_file(
+            file_path=cast(str, file_path),
             destination=destination,
-            progress=progress,
-            workers=workers,
+            timeout=timeout,
+            chunk_size=chunk_size,
+            seek=seek,
         )
 
     async def __call__(self, method: TelegramMethod[T], request_timeout: int | None = None) -> T:
@@ -2094,6 +2170,7 @@ class Bot:
         can_manage_topics: bool | None = None,
         can_manage_direct_messages: bool | None = None,
         can_manage_tags: bool | None = None,
+        can_send_welcome_messages: bool | None = None,
         request_timeout: int | None = None,
     ) -> bool:
         """
@@ -2120,6 +2197,7 @@ class Bot:
         :param can_manage_topics: Pass :code:`True` if the user is allowed to create, rename, close, and reopen forum topics; for supergroups only
         :param can_manage_direct_messages: Pass :code:`True` if the administrator can manage direct messages within the channel and decline suggested posts; for channels only
         :param can_manage_tags: Pass :code:`True` if the administrator can edit the tags of regular members; for groups and supergroups only
+        :param can_send_welcome_messages: Pass :code:`True` if the administrator is allowed to send welcome messages; for groups and supergroups only
         :param request_timeout: Request timeout
         :return: Returns :code:`True` on success.
         """
@@ -2144,6 +2222,7 @@ class Bot:
             can_manage_topics=can_manage_topics,
             can_manage_direct_messages=can_manage_direct_messages,
             can_manage_tags=can_manage_tags,
+            can_send_welcome_messages=can_send_welcome_messages,
         )
         return await self(call, request_timeout=request_timeout)
 
@@ -2969,6 +3048,7 @@ class Bot:
         suggested_post_parameters: SuggestedPostParameters | None = None,
         reply_parameters: ReplyParameters | None = None,
         reply_markup: ReplyMarkupUnion | None = None,
+        ephemeral_message_parameters: EphemeralMessageParameters | None = None,
         receiver_user_id: int | None = None,
         callback_query_id: str | None = None,
         allow_sending_without_reply: bool | None = None,
@@ -2996,6 +3076,7 @@ class Bot:
         :param suggested_post_parameters: A JSON-serialized object containing the parameters of the suggested post to send; for direct messages chats only. If the message is sent as a reply to another suggested post, then that suggested post is automatically declined.
         :param reply_parameters: Description of the message to reply to
         :param reply_markup: Additional interface options. A JSON-serialized object for an `inline keyboard <https://core.telegram.org/bots/features#inline-keyboards>`_, `custom reply keyboard <https://core.telegram.org/bots/features#keyboards>`_, instructions to remove a reply keyboard or to force a reply from the user.
+        :param ephemeral_message_parameters: Parameters of the ephemeral message
         :param receiver_user_id: For outgoing ephemeral messages, unique identifier of the user who will receive the message; for group and supergroup chats only. It is not guaranteed that the user will receive the message, especially if they are offline. See `ephemeral message sending <https://core.telegram.org/bots/api#ephemeral-messages-and-commands>`_ for more details.
         :param callback_query_id: For outgoing ephemeral messages, identifier of the callback query which triggerred the message if any
         :param allow_sending_without_reply: Pass :code:`True` if the message should be sent even if the specified replied-to message is not found
@@ -3021,6 +3102,7 @@ class Bot:
             suggested_post_parameters=suggested_post_parameters,
             reply_parameters=reply_parameters,
             reply_markup=reply_markup,
+            ephemeral_message_parameters=ephemeral_message_parameters,
             receiver_user_id=receiver_user_id,
             callback_query_id=callback_query_id,
             allow_sending_without_reply=allow_sending_without_reply,
@@ -6003,6 +6085,8 @@ class Bot:
         text: str | None = None,
         parse_mode: str | Default | None = Default("parse_mode"),
         entities: list[MessageEntity] | None = None,
+        can_stop: bool | None = None,
+        keep_on_stop: bool | None = None,
         request_timeout: int | None = None,
     ) -> bool:
         """
@@ -6016,6 +6100,8 @@ class Bot:
         :param text: Text of the message to be sent, 0-4096 characters after entities parsing. Pass an empty text to show a 'Thinking…' placeholder.
         :param parse_mode: Mode for parsing entities in the message text. See `formatting options <https://core.telegram.org/bots/api#formatting-options>`_ for more details.
         :param entities: A JSON-serialized list of special entities that appear in message text, which can be specified instead of *parse_mode*
+        :param can_stop: Pass :code:`True` if the user can stop the draft generation
+        :param keep_on_stop: Pass :code:`True` if the draft must not be deleted after the user stopped generation
         :param request_timeout: Request timeout
         :return: Returns :code:`True` on success.
         """
@@ -6027,6 +6113,8 @@ class Bot:
             text=text,
             parse_mode=parse_mode,
             entities=entities,
+            can_stop=can_stop,
+            keep_on_stop=keep_on_stop,
         )
         return await self(call, request_timeout=request_timeout)
 
@@ -6510,6 +6598,8 @@ class Bot:
         draft_id: int,
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,
+        can_stop: bool | None = None,
+        keep_on_stop: bool | None = None,
         request_timeout: int | None = None,
     ) -> bool:
         """
@@ -6521,6 +6611,8 @@ class Bot:
         :param draft_id: Unique identifier of the message draft; must be non-zero. Changes to drafts with the same identifier are animated.
         :param rich_message: The partial message to be streamed. Direct upload of new files isn't supported.
         :param message_thread_id: Unique identifier for the target message thread
+        :param can_stop: Pass :code:`True` if the user can stop the draft generation
+        :param keep_on_stop: Pass :code:`True` if the draft must not be deleted after the user stopped generation
         :param request_timeout: Request timeout
         :return: Returns :code:`True` on success.
         """
@@ -6530,6 +6622,8 @@ class Bot:
             draft_id=draft_id,
             rich_message=rich_message,
             message_thread_id=message_thread_id,
+            can_stop=can_stop,
+            keep_on_stop=keep_on_stop,
         )
         return await self(call, request_timeout=request_timeout)
 
@@ -6567,6 +6661,7 @@ class Bot:
         caption: str | None = None,
         parse_mode: str | Default | None = Default("parse_mode"),
         caption_entities: list[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
         reply_markup: InlineKeyboardMarkup | None = None,
         request_timeout: int | None = None,
     ) -> bool:
@@ -6581,6 +6676,7 @@ class Bot:
         :param caption: New caption of the message, 0-1024 characters after entities parsing
         :param parse_mode: Mode for parsing entities in the message caption. See `formatting options <https://core.telegram.org/bots/api#formatting-options>`_ for more details.
         :param caption_entities: A JSON-serialized list of special entities that appear in the caption, which can be specified instead of *parse_mode*
+        :param show_caption_above_media: Pass :code:`True` if the caption must be shown above the message media
         :param reply_markup: A JSON-serialized object for an `inline keyboard <https://core.telegram.org/bots/features#inline-keyboards>`_
         :param request_timeout: Request timeout
         :return: On success, :code:`True` is returned.
@@ -6593,6 +6689,7 @@ class Bot:
             caption=caption,
             parse_mode=parse_mode,
             caption_entities=caption_entities,
+            show_caption_above_media=show_caption_above_media,
             reply_markup=reply_markup,
         )
         return await self(call, request_timeout=request_timeout)
@@ -6663,7 +6760,8 @@ class Bot:
         chat_id: ChatIdUnion,
         receiver_user_id: int,
         ephemeral_message_id: int,
-        text: str,
+        text: str | None = None,
+        rich_message: InputRichMessage | None = None,
         parse_mode: str | Default | None = Default("parse_mode"),
         entities: list[MessageEntity] | None = None,
         link_preview_options: LinkPreviewOptions | None = None,
@@ -6679,6 +6777,7 @@ class Bot:
         :param receiver_user_id: Identifier of the user who received the message
         :param ephemeral_message_id: Identifier of the ephemeral message to edit
         :param text: New text of the message, 1-4096 characters after entity parsing
+        :param rich_message: A JSON-serialized object for the new rich message content
         :param parse_mode: Mode for parsing entities in the message text. See `formatting options <https://core.telegram.org/bots/api#formatting-options>`_ for more details.
         :param entities: A JSON-serialized list of special entities that appear in message text, which can be specified instead of *parse_mode*
         :param link_preview_options: Link preview generation options for the message
@@ -6692,6 +6791,7 @@ class Bot:
             receiver_user_id=receiver_user_id,
             ephemeral_message_id=ephemeral_message_id,
             text=text,
+            rich_message=rich_message,
             parse_mode=parse_mode,
             entities=entities,
             link_preview_options=link_preview_options,

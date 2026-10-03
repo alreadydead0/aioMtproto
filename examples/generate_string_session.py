@@ -1,60 +1,87 @@
 """
-Interactive script to generate a portable MTProto String Session.
+Interactive script to generate a portable native aioMtproto MTProto String Session.
 
 Usage:
     python examples/generate_string_session.py
 """
 
-import asyncio
+from __future__ import annotations
 
-from aiogram import Bot
+import asyncio
+import getpass
+
+from aiogram import UserClient
 
 
 async def main() -> None:
-    print("=== aiogram MTProto String Session Generator ===\n")
-    api_id_input = input("Enter Telegram API ID: ").strip()
-    api_hash = input("Enter Telegram API HASH: ").strip()
-    api_id = int(api_id_input)
+    print("=" * 60)
+    print("      aioMtproto Native String Session Generator")
+    print("=" * 60)
 
-    bot_token = input("Enter Bot Token (leave empty for User login): ").strip() or None
+    print("Select Login Type:")
+    print("  1. Telegram User Account (Phone / Code / 2FA)")
+    print("  2. Telegram Bot (Bot Token)")
+    choice = input("Enter choice (1/2, default 1): ").strip() or "1"
 
-    bot = Bot(
-        api_id=api_id,
-        api_hash=api_hash,
-        token=bot_token,
-        mtproto_session=":memory:",
-    )
+    api_id_str = input("\nEnter API ID: ").strip()
+    api_hash = input("Enter API HASH: ").strip()
+    api_id = int(api_id_str)
 
-    print("\nConnecting to Telegram MTProto...")
-    await bot.connect()
-
-    if bot_token:
-        print("Authorizing as Bot...")
-        await bot.mtproto.sign_in_bot(bot_token)
-    else:
-        phone = input("Enter Phone Number (with country code e.g. +91...): ").strip()
-        print("Sending login code...")
-        sent_code = await bot.mtproto.send_code(phone)
-        code = input("Enter the login code you received in Telegram: ").strip()
-        await bot.mtproto.sign_in(
-            phone=phone,
-            code=code,
-            phone_code_hash=sent_code.phone_code_hash,
+    if choice == "2":
+        bot_token = input("Enter Bot Token: ").strip()
+        client = UserClient(
+            api_id=api_id,
+            api_hash=api_hash,
+            bot_token=bot_token,
+            session=":memory:",
         )
+        print("\nConnecting to MTProto & authorizing bot...")
+        await client.start()
+    else:
+        phone = input("Enter Phone Number (e.g. +1234567890): ").strip()
+        client = UserClient(
+            api_id=api_id,
+            api_hash=api_hash,
+            phone=phone,
+            session=":memory:",
+        )
+        print("\nConnecting to MTProto...")
+        await client.mtproto.connect()
 
-    session_string = await bot.export_session_string()
+        print(f"Sending login code to {phone}...")
+        sent_code = await client.mtproto.send_code(phone)
+        code = input("Enter the login code you received: ").strip()
+
+        try:
+            await client.mtproto.sign_in(
+                phone_number=phone,
+                phone_code_hash=sent_code.phone_code_hash,
+                phone_code=code,
+            )
+        except Exception as e:
+            if "SESSION_PASSWORD_NEEDED" in str(e) or type(e).__name__ == "SessionPasswordNeeded":
+                pwd = getpass.getpass("Enter 2FA Password (input is hidden for security): ")
+                await client.mtproto.check_password(pwd)
+            else:
+                raise
+
+    me = await client.get_me()
+    print(f"\n✅ Authenticated successfully as: {me.first_name} (@{me.username or me.id})")
+
+    session_string = await client.export_session_string()
 
     print("\n" + "=" * 60)
-    print("YOUR STRING SESSION:")
+    print("🌟 YOUR NATIVE aioMtproto STRING SESSION:")
     print("=" * 60)
     print(session_string)
     print("=" * 60)
-    print("\nKeep this string secret! You can now use it in your code as:")
-    print(
-        f'bot = Bot(api_id={api_id}, api_hash="{api_hash}", mtproto_session="{session_string[:15]}...")'
-    )
 
-    await bot.disconnect()
+    print("\n⚠️ Keep this session string secret! Never commit it to public repos.")
+    print("Usage in your userbot:")
+    print(
+        f'client = UserClient(api_id={api_id}, api_hash="{api_hash}", session_string="{session_string[:15]}...")'
+    )
+    await client.stop()
 
 
 if __name__ == "__main__":

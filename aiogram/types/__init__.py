@@ -75,6 +75,10 @@ from .checklist_task import ChecklistTask
 from .checklist_tasks_added import ChecklistTasksAdded
 from .checklist_tasks_done import ChecklistTasksDone
 from .chosen_inline_result import ChosenInlineResult
+from .community import Community
+from .community_chat_added import CommunityChatAdded
+from .community_chat_joined import CommunityChatJoined
+from .community_chat_removed import CommunityChatRemoved
 from .contact import Contact
 from .copy_text_button import CopyTextButton
 from .custom import DateTime
@@ -82,10 +86,12 @@ from .date_time_union import DateTimeUnion
 from .dice import Dice
 from .direct_message_price_changed import DirectMessagePriceChanged
 from .direct_messages_topic import DirectMessagesTopic
+from .disabled_button import DisabledButton
 from .document import Document
 from .downloadable import Downloadable
 from .encrypted_credentials import EncryptedCredentials
 from .encrypted_passport_element import EncryptedPassportElement
+from .ephemeral_message_parameters import EphemeralMessageParameters
 from .error_event import ErrorEvent
 from .external_reply_info import ExternalReplyInfo
 from .file import File
@@ -190,6 +196,7 @@ from .menu_button_web_app import MenuButtonWebApp
 from .message import ContentType, Message
 from .message_auto_delete_timer_changed import MessageAutoDeleteTimerChanged
 from .message_entity import MessageEntity
+from .message_generation_stopped import MessageGenerationStopped
 from .message_id import MessageId
 from .message_origin import MessageOrigin
 from .message_origin_channel import MessageOriginChannel
@@ -401,6 +408,7 @@ __all__ = (
     "ChosenInlineResult",
     "Community",
     "CommunityChatAdded",
+    "CommunityChatJoined",
     "CommunityChatRemoved",
     "Contact",
     "ContentType",
@@ -410,10 +418,12 @@ __all__ = (
     "Dice",
     "DirectMessagePriceChanged",
     "DirectMessagesTopic",
+    "DisabledButton",
     "Document",
     "Downloadable",
     "EncryptedCredentials",
     "EncryptedPassportElement",
+    "EphemeralMessageParameters",
     "ErrorEvent",
     "ExternalReplyInfo",
     "FSInputFile",
@@ -505,9 +515,12 @@ __all__ = (
     "InputRichBlockAnimation",
     "InputRichBlockAudio",
     "InputRichBlockBlockQuotation",
+    "InputRichBlockButtons",
     "InputRichBlockCollage",
     "InputRichBlockDetails",
     "InputRichBlockDivider",
+    "InputRichBlockDocument",
+    "InputRichBlockExpandableBlockQuotation",
     "InputRichBlockFooter",
     "InputRichBlockList",
     "InputRichBlockListItem",
@@ -563,6 +576,7 @@ __all__ = (
     "Message",
     "MessageAutoDeleteTimerChanged",
     "MessageEntity",
+    "MessageGenerationStopped",
     "MessageId",
     "MessageOrigin",
     "MessageOriginChannel",
@@ -635,10 +649,13 @@ __all__ = (
     "RichBlockAnimation",
     "RichBlockAudio",
     "RichBlockBlockQuotation",
+    "RichBlockButtons",
     "RichBlockCaption",
     "RichBlockCollage",
     "RichBlockDetails",
     "RichBlockDivider",
+    "RichBlockDocument",
+    "RichBlockExpandableBlockQuotation",
     "RichBlockFooter",
     "RichBlockList",
     "RichBlockListItem",
@@ -657,12 +674,14 @@ __all__ = (
     "RichBlockVideo",
     "RichBlockVoiceNote",
     "RichMessage",
+    "RichMessageButton",
     "RichText",
     "RichTextAnchor",
     "RichTextAnchorLink",
     "RichTextBankCardNumber",
     "RichTextBold",
     "RichTextBotCommand",
+    "RichTextButton",
     "RichTextCashtag",
     "RichTextCode",
     "RichTextCustomEmoji",
@@ -763,9 +782,6 @@ from .bot_access_settings import BotAccessSettings
 from .bot_subscription_updated import BotSubscriptionUpdated
 from .chat_owner_changed import ChatOwnerChanged
 from .chat_owner_left import ChatOwnerLeft
-from .community import Community
-from .community_chat_added import CommunityChatAdded
-from .community_chat_removed import CommunityChatRemoved
 from .input_media_link import InputMediaLink
 from .input_media_live_photo import InputMediaLivePhoto
 from .input_media_location import InputMediaLocation
@@ -782,9 +798,14 @@ from .input_rich_block_anchor import InputRichBlockAnchor
 from .input_rich_block_animation import InputRichBlockAnimation
 from .input_rich_block_audio import InputRichBlockAudio
 from .input_rich_block_block_quotation import InputRichBlockBlockQuotation
+from .input_rich_block_buttons import InputRichBlockButtons
 from .input_rich_block_collage import InputRichBlockCollage
 from .input_rich_block_details import InputRichBlockDetails
 from .input_rich_block_divider import InputRichBlockDivider
+from .input_rich_block_document import InputRichBlockDocument
+from .input_rich_block_expandable_block_quotation import (
+    InputRichBlockExpandableBlockQuotation,
+)
 from .input_rich_block_footer import InputRichBlockFooter
 from .input_rich_block_list import InputRichBlockList
 from .input_rich_block_list_item import InputRichBlockListItem
@@ -820,10 +841,15 @@ from .rich_block_anchor import RichBlockAnchor
 from .rich_block_animation import RichBlockAnimation
 from .rich_block_audio import RichBlockAudio
 from .rich_block_block_quotation import RichBlockBlockQuotation
+from .rich_block_buttons import RichBlockButtons
 from .rich_block_caption import RichBlockCaption
 from .rich_block_collage import RichBlockCollage
 from .rich_block_details import RichBlockDetails
 from .rich_block_divider import RichBlockDivider
+from .rich_block_document import RichBlockDocument
+from .rich_block_expandable_block_quotation import (
+    RichBlockExpandableBlockQuotation,
+)
 from .rich_block_footer import RichBlockFooter
 from .rich_block_list import RichBlockList
 from .rich_block_list_item import RichBlockListItem
@@ -842,12 +868,14 @@ from .rich_block_union import RichBlockUnion
 from .rich_block_video import RichBlockVideo
 from .rich_block_voice_note import RichBlockVoiceNote
 from .rich_message import RichMessage
+from .rich_message_button import RichMessageButton
 from .rich_text import RichText
 from .rich_text_anchor import RichTextAnchor
 from .rich_text_anchor_link import RichTextAnchorLink
 from .rich_text_bank_card_number import RichTextBankCardNumber
 from .rich_text_bold import RichTextBold
 from .rich_text_bot_command import RichTextBotCommand
+from .rich_text_button import RichTextButton
 from .rich_text_cashtag import RichTextCashtag
 from .rich_text_code import RichTextCode
 from .rich_text_custom_emoji import RichTextCustomEmoji

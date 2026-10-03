@@ -13,3 +13,4 @@ class ButtonStyle(str, Enum):
     DANGER = "danger"
     SUCCESS = "success"
     PRIMARY = "primary"
+    LINK = "link"

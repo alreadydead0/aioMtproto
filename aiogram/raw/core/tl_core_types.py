@@ -7,7 +7,7 @@ from __future__ import annotations
 import gzip
 import io
 import struct
-from typing import Any, BinaryIO, List
+from typing import Any, BinaryIO
 
 from aiogram.raw.core.primitives import (
     TLObject,

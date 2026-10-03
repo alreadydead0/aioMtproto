@@ -15,12 +15,14 @@ from collections.abc import AsyncGenerator, Callable
 from typing import Any, BinaryIO, TypeVar
 
 from aiogram import types as tg_types
+from aiogram.client.peer_resolver import PeerResolver
 from aiogram.enums import ChatType
 from aiogram.mtproto.auth.handshake import do_handshake
 from aiogram.mtproto.connection.dc import DataCenter, get_dc
 from aiogram.mtproto.connection.dc_manager import DCClientSession, DCManager
 from aiogram.mtproto.connection.tcp import TCPConnection
 from aiogram.mtproto.connection.transport import BaseTransport, IntermediateTransport
+from aiogram.mtproto.crypto.srp import compute_srp_password
 from aiogram.mtproto.protocol.rpc import RPCEngine
 from aiogram.mtproto.updates.normalizer import normalize_tl_update
 from aiogram.raw import functions as raw_funcs
@@ -37,10 +39,17 @@ T = TypeVar("T")
 
 def _to_input_peer(peer_id: Any, access_hash: int = 0) -> raw_types.InputPeer:
     """
-    Resolve peer identifier to InputPeer.
+    Resolve peer identifier to InputPeer (synchronous fallback).
     """
     if isinstance(peer_id, raw_types.InputPeer):
         return peer_id
+    if isinstance(peer_id, str):
+        if peer_id.lower() in ("me", "self"):
+            return raw_types.InputPeerSelf()
+        if peer_id.lstrip("-").isdigit():
+            peer_id = int(peer_id)
+        else:
+            return raw_types.InputPeerSelf()
     if isinstance(peer_id, int):
         if peer_id > 0:
             return raw_types.InputPeerUser(user_id=peer_id, access_hash=access_hash)
@@ -80,7 +89,12 @@ class MTProtoClient:
         if isinstance(session, str):
             if session == ":memory:":
                 self.session_storage: BaseMTProtoSession = MemorySession()
-            elif session.startswith("AIOG") or len(session) > 100:
+            elif (
+                StringSession.is_valid(session)
+                or session.startswith("AIOG")
+                or session.startswith("AIO2")
+                or len(session) > 100
+            ):
                 self.session_storage = StringSession(session)
             else:
                 self.session_storage = SQLiteSession(session)
@@ -98,6 +112,7 @@ class MTProtoClient:
         )
         self.dc_manager.add_update_handler(self._on_raw_update)
 
+        self.peer_resolver = PeerResolver(self)
         self.session_data: SessionData | None = None
         self.me: tg_types.User | None = None
         self._update_queue: asyncio.Queue[tg_types.Update] = asyncio.Queue()
@@ -200,7 +215,9 @@ class MTProtoClient:
         for dc_id in target_dcs:
             tasks.append(self.get_media_client(dc_id, worker_idx=0, pool_size=pool_size))
         await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info("⚡ MTProto DC Pre-Warmup complete for DCs %s (pool_size=%d)", target_dcs, pool_size)
+        logger.info(
+            "⚡ MTProto DC Pre-Warmup complete for DCs %s (pool_size=%d)", target_dcs, pool_size
+        )
 
     def _on_raw_update(self, raw_update_obj: Any) -> None:
         """
@@ -277,7 +294,15 @@ class MTProtoClient:
             await self.session_storage.save(self.session_data)
         return self.me
 
-    async def send_code(self, phone_number: str) -> raw_types.SentCode:
+    async def resolve_peer(self, peer: Any) -> raw_types.InputPeer:
+        """
+        Resolve peer identifier into raw InputPeer.
+        """
+        return await self.peer_resolver.resolve_peer(peer)
+
+    async def send_code(
+        self, phone_number: str, settings: raw_types.CodeSettings | None = None
+    ) -> raw_types.SentCode:
         """
         Send SMS/Telegram login code for user authorization.
         """
@@ -286,11 +311,37 @@ class MTProtoClient:
                 phone_number=phone_number,
                 api_id=self.api_id,
                 api_hash=self.api_hash,
+                settings=settings,
+            )
+        )
+
+    async def resend_code(
+        self, phone_number: str, phone_code_hash: str, reason: str | None = None
+    ) -> raw_types.SentCode:
+        """
+        Resend SMS/Telegram login code.
+        """
+        return await self.invoke(
+            raw_funcs.auth.ResendCode(
+                phone_number=phone_number,
+                phone_code_hash=phone_code_hash,
+                reason=reason,
+            )
+        )
+
+    async def cancel_code(self, phone_number: str, phone_code_hash: str) -> bool:
+        """
+        Cancel login code request.
+        """
+        return await self.invoke(
+            raw_funcs.auth.CancelCode(
+                phone_number=phone_number,
+                phone_code_hash=phone_code_hash,
             )
         )
 
     async def sign_in(
-        self, phone_number: str, phone_code_hash: str, phone_code: str
+        self, phone_number: str, phone_code_hash: str, phone_code: str | None = None
     ) -> tg_types.User:
         """
         Complete user authorization using received code.
@@ -303,6 +354,7 @@ class MTProtoClient:
             )
         )
         raw_user = res.user
+        self.peer_resolver.cache_user(raw_user)
         self.me = tg_types.User(
             id=raw_user.id,
             is_bot=raw_user.bot,
@@ -316,8 +368,83 @@ class MTProtoClient:
             self.session_data.user_id = self.me.id
             self.session_data.phone = phone_number
             self.session_data.is_bot = False
+            self.session_data.api_id = self.api_id
             await self.session_storage.save(self.session_data)
         return self.me
+
+    async def sign_up(
+        self,
+        phone_number: str,
+        phone_code_hash: str,
+        first_name: str,
+        last_name: str = "",
+    ) -> tg_types.User:
+        """
+        Sign up a new Telegram user.
+        """
+        res = await self.invoke(
+            raw_funcs.auth.SignUp(
+                phone_number=phone_number,
+                phone_code_hash=phone_code_hash,
+                first_name=first_name,
+                last_name=last_name,
+            )
+        )
+        raw_user = res.user
+        self.peer_resolver.cache_user(raw_user)
+        self.me = tg_types.User(
+            id=raw_user.id,
+            is_bot=raw_user.bot,
+            first_name=raw_user.first_name or "",
+            last_name=raw_user.last_name,
+            username=raw_user.username,
+            language_code=raw_user.lang_code,
+            is_premium=getattr(raw_user, "premium", False),
+        )
+        if self.session_data:
+            self.session_data.user_id = self.me.id
+            self.session_data.phone = phone_number
+            self.session_data.is_bot = False
+            self.session_data.api_id = self.api_id
+            await self.session_storage.save(self.session_data)
+        return self.me
+
+    async def check_password(self, password: str) -> tg_types.User:
+        """
+        Authenticate using 2FA cloud password via MTProto SRP protocol.
+        """
+        acc_pwd = await self.invoke(raw_funcs.account.GetPassword())
+        srp_input = compute_srp_password(password, acc_pwd)
+        res = await self.invoke(raw_funcs.auth.CheckPassword(password=srp_input))
+        raw_user = res.user
+        self.peer_resolver.cache_user(raw_user)
+        self.me = tg_types.User(
+            id=raw_user.id,
+            is_bot=raw_user.bot,
+            first_name=raw_user.first_name or "",
+            last_name=raw_user.last_name,
+            username=raw_user.username,
+            language_code=raw_user.lang_code,
+            is_premium=getattr(raw_user, "premium", False),
+        )
+        if self.session_data:
+            self.session_data.user_id = self.me.id
+            self.session_data.is_bot = False
+            self.session_data.api_id = self.api_id
+            await self.session_storage.save(self.session_data)
+        return self.me
+
+    async def log_out(self) -> bool:
+        """
+        Log out current session and invalidate local storage.
+        """
+        try:
+            await self.invoke(raw_funcs.auth.LogOut())
+        except Exception as e:
+            logger.debug("LogOut RPC returned error: %s", e)
+        await self.session_storage.delete()
+        self.me = None
+        return True
 
     async def get_me(self) -> tg_types.User:
         """
@@ -332,6 +459,7 @@ class MTProtoClient:
         users_res = await self.invoke(raw_funcs.users.GetUsers(id=[raw_types.InputPeerSelf()]))
         if users_res and len(users_res) > 0:
             raw_user = users_res[0]
+            self.peer_resolver.cache_user(raw_user)
             self.me = tg_types.User(
                 id=raw_user.id,
                 is_bot=raw_user.bot,
@@ -355,7 +483,7 @@ class MTProtoClient:
         """
         Send a text message via MTProto.
         """
-        peer = _to_input_peer(chat_id)
+        peer = await self.peer_resolver.resolve_peer(chat_id)
         random_id = random.getrandbits(63)
         res = await self.invoke(
             raw_funcs.messages.SendMessage(
@@ -385,7 +513,7 @@ class MTProtoClient:
         """
         Edit a message text via MTProto.
         """
-        peer = _to_input_peer(chat_id)
+        peer = await self.peer_resolver.resolve_peer(chat_id)
         await self.invoke(raw_funcs.messages.EditMessage(peer=peer, id=message_id, message=text))
         chat_id_int = chat_id if isinstance(chat_id, int) else 0
         chat = tg_types.Chat(id=chat_id_int, type=ChatType.PRIVATE)
@@ -408,6 +536,29 @@ class MTProtoClient:
         """
         await self.invoke(raw_funcs.messages.DeleteMessages(id=message_ids, revoke=revoke))
         return True
+
+    async def forward_messages(
+        self,
+        from_chat_id: int | str,
+        to_chat_id: int | str,
+        message_ids: list[int],
+        drop_author: bool = False,
+        drop_media_captions: bool = False,
+    ) -> Any:
+        """
+        Forward messages from one chat to another.
+        """
+        from_peer = await self.peer_resolver.resolve_peer(from_chat_id)
+        to_peer = await self.peer_resolver.resolve_peer(to_chat_id)
+        return await self.invoke(
+            raw_funcs.messages.ForwardMessages(
+                from_peer=from_peer,
+                to_peer=to_peer,
+                id=message_ids,
+                drop_author=drop_author,
+                drop_media_captions=drop_media_captions,
+            )
+        )
 
     async def upload_file(
         self,
@@ -462,7 +613,7 @@ class MTProtoClient:
             force_file=force_file,
         )
         clean_text = html.unescape(re.sub(r"<[^>]+>", "", caption)) if caption else ""
-        peer = _to_input_peer(chat_id)
+        peer = await self.peer_resolver.resolve_peer(chat_id)
         random_id = random.getrandbits(63)
         await self.invoke(
             raw_funcs.messages.SendMedia(
@@ -528,7 +679,7 @@ class MTProtoClient:
             force_file=False,
         )
         clean_text = html.unescape(re.sub(r"<[^>]+>", "", caption)) if caption else ""
-        peer = _to_input_peer(chat_id)
+        peer = await self.peer_resolver.resolve_peer(chat_id)
         random_id = random.getrandbits(63)
         await self.invoke(
             raw_funcs.messages.SendMedia(
@@ -575,7 +726,7 @@ class MTProtoClient:
 
     async def export_session_string(self) -> str:
         """
-        Export the current authorized MTProto session as a portable Base64 string.
+        Export current authorized MTProto session as portable native aioMtproto string.
         """
         data = await self.session_storage.load()
         return StringSession._encode(data)

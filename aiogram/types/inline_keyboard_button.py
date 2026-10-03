@@ -7,6 +7,7 @@ from .base import MutableTelegramObject
 if TYPE_CHECKING:
     from .callback_game import CallbackGame
     from .copy_text_button import CopyTextButton
+    from .disabled_button import DisabledButton
     from .login_url import LoginUrl
     from .switch_inline_query_chosen_chat import SwitchInlineQueryChosenChat
     from .web_app_info import WebAppInfo
@@ -45,6 +46,8 @@ class InlineKeyboardButton(MutableTelegramObject):
     """*Optional*. Description of the game that will be launched when the user presses the button"""
     pay: bool | None = None
     """*Optional*. Specify :code:`True`, to send a `Pay button <https://core.telegram.org/bots/api#payments>`_. Substrings '⭐' and 'XTR' in the buttons's text will be replaced with a Telegram Star icon"""
+    disabled: DisabledButton | None = None
+    """*Optional*. Description of the disabled button"""
 
     if TYPE_CHECKING:
         # DO NOT EDIT MANUALLY!!!
@@ -66,6 +69,7 @@ class InlineKeyboardButton(MutableTelegramObject):
             copy_text: CopyTextButton | None = None,
             callback_game: CallbackGame | None = None,
             pay: bool | None = None,
+            disabled: DisabledButton | None = None,
             **__pydantic_kwargs: Any,
         ) -> None:
             # DO NOT EDIT MANUALLY!!!
@@ -86,5 +90,6 @@ class InlineKeyboardButton(MutableTelegramObject):
                 copy_text=copy_text,
                 callback_game=callback_game,
                 pay=pay,
+                disabled=disabled,
                 **__pydantic_kwargs,
             )

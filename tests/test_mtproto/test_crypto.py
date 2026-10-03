@@ -1,3 +1,4 @@
+# ruff: noqa: T201
 """
 Tests for MTProto cryptographic primitives (AES-IGE, DH, Pollard's rho, RSA, KDF, AuthKey).
 """

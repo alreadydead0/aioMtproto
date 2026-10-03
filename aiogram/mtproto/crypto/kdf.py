@@ -10,7 +10,7 @@ from typing import Any, cast
 _HAS_HYPERCRYPTO = False
 _hypercrypto: Any = None
 try:
-    import hypercrypto as _hypercrypto
+    import hypercrypto as _hypercrypto  # type: ignore[import-untyped,no-redef]
 
     _HAS_HYPERCRYPTO = hasattr(_hypercrypto, "kdf") and hasattr(_hypercrypto, "sha256")
 except ImportError:

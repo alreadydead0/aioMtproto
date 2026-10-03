@@ -64,7 +64,11 @@ class SQLiteSession(BaseMTProtoSession):
             with sqlite3.connect(self.filename) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT dc_id, server_address, port, auth_key, server_salt, seq_no, user_id, is_bot, phone, is_test FROM session LIMIT 1"
+                    """
+                    SELECT dc_id, server_address, port, auth_key, server_salt, seq_no,
+                           user_id, is_bot, phone, is_test
+                    FROM session LIMIT 1
+                    """
                 )
                 row = cursor.fetchone()
                 if not row:
@@ -99,7 +103,9 @@ class SQLiteSession(BaseMTProtoSession):
 
                 # Load multi-DC credentials
                 try:
-                    cursor.execute("SELECT dc_id, auth_key, server_salt, auth_imported FROM dc_auth")
+                    cursor.execute(
+                        "SELECT dc_id, auth_key, server_salt, auth_imported FROM dc_auth"
+                    )
                     for d_id, a_blob, s_salt, a_imp in cursor.fetchall():
                         if a_blob:
                             data.dc_auth_keys[d_id] = (AuthKey(a_blob), s_salt)
@@ -127,7 +133,10 @@ class SQLiteSession(BaseMTProtoSession):
                 conn.execute("DELETE FROM session")
                 conn.execute(
                     """
-                    INSERT INTO session (dc_id, server_address, port, auth_key, server_salt, seq_no, user_id, is_bot, phone, is_test)
+                    INSERT INTO session (
+                        dc_id, server_address, port, auth_key, server_salt,
+                        seq_no, user_id, is_bot, phone, is_test
+                    )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (

@@ -22,6 +22,10 @@ class SendRichMessageDraft(TelegramMethod[bool]):
     """The partial message to be streamed. Direct upload of new files isn't supported"""
     message_thread_id: int | None = None
     """Unique identifier for the target message thread"""
+    can_stop: bool | None = None
+    """*Optional*. Pass :code:`True` if the user can stop the generation of the message draft"""
+    keep_on_stop: bool | None = None
+    """*Optional*. Pass :code:`True` if the message draft must not be hidden when the user stops the generation"""
 
     if TYPE_CHECKING:
         # DO NOT EDIT MANUALLY!!!
@@ -34,6 +38,8 @@ class SendRichMessageDraft(TelegramMethod[bool]):
             draft_id: int,
             rich_message: InputRichMessage,
             message_thread_id: int | None = None,
+            can_stop: bool | None = None,
+            keep_on_stop: bool | None = None,
             **__pydantic_kwargs: Any,
         ) -> None:
             # DO NOT EDIT MANUALLY!!!
@@ -45,5 +51,7 @@ class SendRichMessageDraft(TelegramMethod[bool]):
                 draft_id=draft_id,
                 rich_message=rich_message,
                 message_thread_id=message_thread_id,
+                can_stop=can_stop,
+                keep_on_stop=keep_on_stop,
                 **__pydantic_kwargs,
             )

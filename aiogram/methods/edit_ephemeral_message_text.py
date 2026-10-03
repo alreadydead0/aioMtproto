@@ -1,7 +1,13 @@
 from typing import TYPE_CHECKING, Any
 
 from ..client.default import Default
-from ..types import ChatIdUnion, InlineKeyboardMarkup, LinkPreviewOptions, MessageEntity
+from ..types import (
+    ChatIdUnion,
+    InlineKeyboardMarkup,
+    InputRichMessage,
+    LinkPreviewOptions,
+    MessageEntity,
+)
 from .base import TelegramMethod
 
 
@@ -21,8 +27,10 @@ class EditEphemeralMessageText(TelegramMethod[bool]):
     """Identifier of the user who received the message"""
     ephemeral_message_id: int
     """Identifier of the ephemeral message to edit"""
-    text: str
-    """New text of the message, 1-4096 characters after entity parsing"""
+    text: str | None = None
+    """*Optional*. New text of the message, 1-4096 characters after entity parsing. Exactly one of text or rich_message must be specified"""
+    rich_message: InputRichMessage | None = None
+    """*Optional*. A JSON-serialized object describing the new rich formatted message. Direct upload of new files isn't supported. Exactly one of text or rich_message must be specified"""
     parse_mode: str | Default | None = Default("parse_mode")
     """Mode for parsing entities in the message text. See `formatting options <https://core.telegram.org/bots/api#formatting-options>`_ for more details"""
     entities: list[MessageEntity] | None = None
@@ -42,7 +50,8 @@ class EditEphemeralMessageText(TelegramMethod[bool]):
             chat_id: ChatIdUnion,
             receiver_user_id: int,
             ephemeral_message_id: int,
-            text: str,
+            text: str | None = None,
+            rich_message: InputRichMessage | None = None,
             parse_mode: str | Default | None = Default("parse_mode"),
             entities: list[MessageEntity] | None = None,
             link_preview_options: LinkPreviewOptions | None = None,
@@ -58,6 +67,7 @@ class EditEphemeralMessageText(TelegramMethod[bool]):
                 receiver_user_id=receiver_user_id,
                 ephemeral_message_id=ephemeral_message_id,
                 text=text,
+                rich_message=rich_message,
                 parse_mode=parse_mode,
                 entities=entities,
                 link_preview_options=link_preview_options,

@@ -19,7 +19,7 @@ _HAS_PYCRYPTODOME = False
 
 _hypercrypto: Any = None
 try:
-    import hypercrypto as _hypercrypto
+    import hypercrypto as _hypercrypto  # type: ignore[import-untyped,no-redef]
 
     _HAS_HYPERCRYPTO = hasattr(_hypercrypto, "ige256_encrypt") and hasattr(
         _hypercrypto, "ige256_decrypt"

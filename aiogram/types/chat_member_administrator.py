@@ -58,6 +58,8 @@ class ChatMemberAdministrator(ChatMember):
     """*Optional*. :code:`True`, if the administrator can edit the tags of regular members; for groups and supergroups only. If omitted, defaults to the value of can_pin_messages"""
     custom_title: str | None = None
     """*Optional*. Custom title for this user"""
+    can_send_welcome_messages: bool | None = None
+    """*Optional*. :code:`True`, if the administrator is allowed to send welcome messages; for groups and supergroups only"""
 
     if TYPE_CHECKING:
         # DO NOT EDIT MANUALLY!!!
@@ -87,6 +89,7 @@ class ChatMemberAdministrator(ChatMember):
             can_manage_direct_messages: bool | None = None,
             can_manage_tags: bool | None = None,
             custom_title: str | None = None,
+            can_send_welcome_messages: bool | None = None,
             **__pydantic_kwargs: Any,
         ) -> None:
             # DO NOT EDIT MANUALLY!!!
@@ -115,5 +118,6 @@ class ChatMemberAdministrator(ChatMember):
                 can_manage_direct_messages=can_manage_direct_messages,
                 can_manage_tags=can_manage_tags,
                 custom_title=custom_title,
+                can_send_welcome_messages=can_send_welcome_messages,
                 **__pydantic_kwargs,
             )

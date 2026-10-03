@@ -63,6 +63,7 @@ from aiogram.types import (
     ChecklistTasksDone,
     Community,
     CommunityChatAdded,
+    CommunityChatJoined,
     CommunityChatRemoved,
     Contact,
     Dice,
@@ -948,6 +949,15 @@ TEST_MESSAGE_COMMUNITY_CHAT_REMOVED = Message(
     from_user=User(id=42, is_bot=False, first_name="Test"),
     community_chat_removed=CommunityChatRemoved(),
 )
+TEST_MESSAGE_COMMUNITY_CHAT_JOINED = Message(
+    message_id=42,
+    date=datetime.datetime.now(),
+    chat=Chat(id=42, type="supergroup", title="Test Group"),
+    from_user=User(id=42, is_bot=False, first_name="Test"),
+    community_chat_joined=CommunityChatJoined(
+        community=Community(id=42, name="Test community"),
+    ),
+)
 TEST_MESSAGE_EPHEMERAL = Message(
     # The API sends `message_id=0` for ephemeral messages; they are addressed
     # by `ephemeral_message_id` instead.
@@ -1044,6 +1054,7 @@ MESSAGES_AND_CONTENT_TYPES = [
     [TEST_MESSAGE_LIVE_PHOTO, ContentType.LIVE_PHOTO],
     [TEST_MESSAGE_RICH_MESSAGE, ContentType.RICH_MESSAGE],
     [TEST_MESSAGE_COMMUNITY_CHAT_ADDED, ContentType.COMMUNITY_CHAT_ADDED],
+    [TEST_MESSAGE_COMMUNITY_CHAT_JOINED, ContentType.COMMUNITY_CHAT_JOINED],
     [TEST_MESSAGE_COMMUNITY_CHAT_REMOVED, ContentType.COMMUNITY_CHAT_REMOVED],
     [TEST_MESSAGE_UNKNOWN, ContentType.UNKNOWN],
 ]
@@ -1127,6 +1138,7 @@ MESSAGES_AND_COPY_METHODS = [
     [TEST_MESSAGE_LIVE_PHOTO, SendLivePhoto],
     [TEST_MESSAGE_RICH_MESSAGE, None],
     [TEST_MESSAGE_COMMUNITY_CHAT_ADDED, None],
+    [TEST_MESSAGE_COMMUNITY_CHAT_JOINED, None],
     [TEST_MESSAGE_COMMUNITY_CHAT_REMOVED, None],
     [TEST_MESSAGE_UNKNOWN, None],
 ]

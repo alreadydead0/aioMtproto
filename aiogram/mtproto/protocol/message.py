@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 _HAS_HYPERCRYPTO = False
 _hypercrypto: Any = None
 try:
-    import hypercrypto as _hypercrypto
+    import hypercrypto as _hypercrypto  # type: ignore[import-untyped,no-redef]
 
     _HAS_HYPERCRYPTO = hasattr(_hypercrypto, "pack_message") and hasattr(
         _hypercrypto, "unpack_message"

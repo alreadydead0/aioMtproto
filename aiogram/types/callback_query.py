@@ -8,6 +8,7 @@ from .base import TelegramObject
 
 if TYPE_CHECKING:
     from ..methods import AnswerCallbackQuery
+    from .ephemeral_message_parameters import EphemeralMessageParameters
     from .maybe_inaccessible_message_union import MaybeInaccessibleMessageUnion
     from .user import User
 
@@ -106,3 +107,16 @@ class CallbackQuery(TelegramObject):
             cache_time=cache_time,
             **kwargs,
         ).as_(self._bot)
+
+    def as_ephemeral_message_parameters(
+        self,
+        *,
+        replace_callback_query_message: bool | None = None,
+    ) -> EphemeralMessageParameters:
+        from .ephemeral_message_parameters import EphemeralMessageParameters
+
+        return EphemeralMessageParameters(
+            receiver_user_id=self.from_user.id,
+            callback_query_id=self.id,
+            replace_callback_query_message=replace_callback_query_message,
+        )
