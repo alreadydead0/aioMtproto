@@ -8,9 +8,18 @@ on:
       - "labeled"
       - "unlabeled"
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 jobs:
   changes-required:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     if: "!contains(github.event.pull_request.labels.*.name, 'skip news')"
     steps:
       - name: Checkout code
@@ -77,6 +86,10 @@ jobs:
 
   skip-news:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     if: "contains(github.event.pull_request.labels.*.name, 'skip news')"
     steps:
       - name: Find bot comment
