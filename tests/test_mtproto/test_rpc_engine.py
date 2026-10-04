@@ -2,13 +2,16 @@
 Tests for MTProto MessageCodec, container multiplexing, and RPCEngine.
 """
 
+import asyncio
 import os
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aiogram.mtproto.crypto.auth_key import AuthKey
 from aiogram.mtproto.protocol.ids import IdGenerator
 from aiogram.mtproto.protocol.message import MessageCodec, MTProtoMessage
+from aiogram.mtproto.protocol.rpc import RPCEngine
 
 
 def test_plain_message_codec() -> None:
@@ -57,10 +60,6 @@ def test_encrypted_message_codec_and_containers() -> None:
 
 @pytest.mark.asyncio
 async def test_rpc_engine_pong_handling() -> None:
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock
-
-    from aiogram.mtproto.protocol.rpc import RPCEngine
     from aiogram.raw.core.tl_core_types import Ping, Pong
 
     conn = MagicMock()
@@ -85,9 +84,6 @@ async def test_rpc_engine_pong_handling() -> None:
 
 @pytest.mark.asyncio
 async def test_rpc_engine_new_session_created() -> None:
-    from unittest.mock import AsyncMock, MagicMock
-
-    from aiogram.mtproto.protocol.rpc import RPCEngine
     from aiogram.raw.core.tl_core_types import NewSessionCreated
 
     conn = MagicMock()
@@ -105,11 +101,8 @@ async def test_rpc_engine_new_session_created() -> None:
 
 @pytest.mark.asyncio
 async def test_rpc_engine_gzip_rpc_result() -> None:
-    import asyncio
     import struct
-    from unittest.mock import AsyncMock, MagicMock
 
-    from aiogram.mtproto.protocol.rpc import RPCEngine
     from aiogram.raw import functions as raw_funcs
     from aiogram.raw.core.tl_core_types import GzipPacked, RpcResult
     from aiogram.raw.types import InputDocumentFileLocation, StorageFileUnknown, UploadFile
@@ -141,3 +134,21 @@ async def test_rpc_engine_gzip_rpc_result() -> None:
     res = fut.result()
     assert isinstance(res, UploadFile)
     assert res.bytes == b"GZIP_CHUNK_DATA"
+
+
+@pytest.mark.asyncio
+async def test_rpc_engine_reset_initialization() -> None:
+    conn = MagicMock()
+    conn.is_connected = True
+    conn.send = AsyncMock()
+    auth_key = AuthKey(os.urandom(256))
+    engine = RPCEngine(connection=conn, auth_key=auth_key, server_salt=100)
+
+    engine._initialized = True
+    assert engine._initialized is True
+
+    engine.reset_initialization()
+    assert engine._initialized is False
+
+    await engine.stop()
+    assert engine._initialized is False

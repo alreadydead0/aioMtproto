@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 
 *.mo
+!tests/data/locales/*/*/*.mo
 
 env/
 build/

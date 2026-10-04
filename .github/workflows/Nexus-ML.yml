@@ -20,37 +20,48 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-    - name: Extract Zip File
+    - name: Extract Zip File Safely
       run: |
-        ZIP_FILE=$(ls *.zip | head -n 1)
+        ZIP_FILE=$(ls *.zip 2>/dev/null | head -n 1)
         
         if [ -z "$ZIP_FILE" ]; then
-          echo "Koi zip file nahi mili!"
+          echo "No zip file found."
+          exit 0
+        fi
+
+        # Check for path traversal attempts in zip contents
+        if unzip -l "$ZIP_FILE" | grep -E '\.\./'; then
+          echo "Security Error: Zip file contains path traversal references ('../'). Aborting."
           exit 1
         fi
         
         echo "Extracting $ZIP_FILE..."
         
-        mkdir temp_extract
+        mkdir -p temp_extract
         unzip -q "$ZIP_FILE" -d temp_extract/
         
         rm "$ZIP_FILE"
         
+        # Hardening: Purge any attempt to modify or overwrite .github/ workflows or config
+        find temp_extract -name ".github" -exec rm -rf {} + 2>/dev/null || true
+
         if [ $(ls temp_extract | wc -l) -eq 1 ] && [ -d temp_extract/* ]; then
-          mv temp_extract/*/* ./ 2>/dev/null || true
+          cp -rn temp_extract/*/* ./ 2>/dev/null || true
           rm -rf temp_extract
         else
-          mv temp_extract/* ./ 2>/dev/null || true
+          cp -rn temp_extract/* ./ 2>/dev/null || true
           rm -rf temp_extract
         fi
 
     - name: Commit and Push Extracted Files
       run: |
+        # Prevent adding any modified .github files
+        git checkout -- .github
         git add .
         
         if git diff --staged --quiet; then
-          echo "Koi nayi files nahi hain commit karne ke liye."
+          echo "No new files to commit."
         else
-          git commit -m "NEXUS-ML"
+          git commit -m "NEXUS-ML [hardened extraction]"
           git push origin HEAD:${{ github.ref }}
         fi

@@ -1,0 +1,1 @@
+Audited, repaired, and synchronized MTProto implementation and TL schema to official Telegram Layer 229 (`api.tl` & `mtproto.tl`). Updated MTProto layer constant to 229, implemented deterministic generator `scripts/generate_tl.py`, hardened connection initialization state resets, and added comprehensive unit tests for crypto, RPC, and transports.

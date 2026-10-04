@@ -37,7 +37,7 @@ from aiogram.raw.core.tl_core_types import (
 logger = logging.getLogger("aiogram.mtproto.rpc")
 T = TypeVar("T")
 
-LAYER = 184
+LAYER = 229
 
 
 def _is_init_exempt(query: TLObject) -> bool:
@@ -85,6 +85,13 @@ class RPCEngine:
         self._initialized = False
         self._ack_queue: list[int] = []
 
+    def reset_initialization(self) -> None:
+        """
+        Reset layer initialization state.
+        Ensures the next non-service query wraps InvokeWithLayer + InitConnection.
+        """
+        self._initialized = False
+
     def add_update_handler(self, callback: Callable[[Any], None]) -> None:
         self._update_callbacks.append(callback)
 
@@ -93,6 +100,7 @@ class RPCEngine:
             self._reader_task = asyncio.create_task(self._reader_loop())
 
     async def stop(self) -> None:
+        self.reset_initialization()
         if self._reader_task and not self._reader_task.done():
             self._reader_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -167,10 +175,26 @@ class RPCEngine:
     ) -> None:
         """
         Resend a pending request after updating server salt or recovering from bad msg notification.
+        Ensures resent request receives InvokeWithLayer / InitConnection if re-initializing.
         """
         try:
             async with self._send_lock:
-                body = query.write()
+                payload_query: TLObject = query
+                if not _is_init_exempt(query) and not self._initialized:
+                    init_conn = InitConnection(
+                        api_id=self.api_id,
+                        device_model=self.device_model,
+                        system_version=self.system_version,
+                        app_version=self.app_version,
+                        system_lang_code=self.lang_code,
+                        lang_pack="",
+                        lang_code=self.lang_code,
+                        query=query,
+                    )
+                    payload_query = InvokeWithLayer(layer=LAYER, query=init_conn)
+                    self._initialized = True
+
+                body = payload_query.write()
                 msg_id = self.id_gen.generate_msg_id()
                 seq_no = self._seq_no * 2 + 1
                 self._seq_no += 1
